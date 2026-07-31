@@ -40,3 +40,6 @@ milvus_data/
 # Logs
 *.log
 logs/
+
+# Runtime data (agent 任务状态库等运行时产物)
+agent/data/

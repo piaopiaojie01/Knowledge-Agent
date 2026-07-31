@@ -137,7 +137,7 @@ def _do_ingest(req: IngestRequest):
             logger.warning(f"清理旧向量失败 doc={doc_id}（继续入库）: {e}")
         qa_pairs = doc_processor.process(req.content, req.title)
         if not qa_pairs:
-            _set_task(doc_id, {"status": "failed", "message": "empty"}); return
+            _set_task(doc_id, {"status": "failed", "message": "未能从文档中提取到有效文本内容"}); return
 
         total = len(qa_pairs); inserted = 0
         _set_task(doc_id, {"status": "processing", "total": total, "done": 0, "message": "向量化 + 入库..."})

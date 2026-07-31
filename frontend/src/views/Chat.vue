@@ -43,16 +43,20 @@
       <div class="messages" v-if="chat.currentTab === 'docs'" style="display:block">
         <h3 style="color:#94a3b8;font-size:14px;margin-bottom:16px">文档列表</h3>
         <table class="doc-table">
-          <thead><tr><th>标题</th><th>类型</th><th>分块</th><th>日期</th><th></th></tr></thead>
+          <thead><tr><th>标题</th><th>类型</th><th>状态</th><th>分块</th><th>日期</th><th></th></tr></thead>
           <tbody>
             <tr v-for="d in docs" :key="d.id">
               <td><span class="doc-title" @click="viewDoc(d.id)" style="color:#3b82f6;cursor:pointer">{{ d.title }}</span></td>
               <td><span :class="['doc-type', d.fileType]">{{ d.fileType }}</span></td>
+              <td>
+                <span v-if="d.docStatus === 'PROCESSING'" style="color:#fbbf24;font-size:12px">解析中…</span>
+                <span v-else-if="d.docStatus === 'FAILED'" style="color:#ef4444;font-size:12px">入库失败</span>
+              </td>
               <td style="color:#64748b">{{ d.chunkCount || 0 }} 分块</td>
               <td style="color:#64748b;font-size:12px">{{ d.createdAt?.substring(0,10) }}</td>
               <td><span @click="removeDoc(d.id)" style="color:#64748b;cursor:pointer">✕</span></td>
             </tr>
-            <tr v-if="!docs.length"><td colspan="5" style="color:#64748b;padding:40px;text-align:center">请先在左侧选择一个知识库</td></tr>
+            <tr v-if="!docs.length"><td colspan="6" style="color:#64748b;padding:40px;text-align:center">请先在左侧选择一个知识库</td></tr>
           </tbody>
         </table>
       </div>
@@ -82,7 +86,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, onMounted } from 'vue'
+import { ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import Sidebar from '../components/Sidebar.vue'
@@ -147,7 +151,7 @@ async function sendMsg() {
 
 async function loadDocs() {
   const sbs = [...kb.selectedKbs]
-  if (!sbs.length) { docs.value = []; return }
+  if (!sbs.length) { docs.value = []; scheduleDocPoll(); return }
   docs.value = []
   for (const kbId of sbs) {
     try {
@@ -155,7 +159,19 @@ async function loadDocs() {
       if (data.code === 200) docs.value.push(...data.data)
     } catch (e) { }
   }
+  scheduleDocPoll()
 }
+
+// 还有文档在解析中时每 5 秒刷新一次，全部落定（ACTIVE/FAILED）后停止轮询
+let docPollTimer = null
+function scheduleDocPoll() {
+  clearTimeout(docPollTimer); docPollTimer = null
+  if (docs.value.some(d => d.docStatus === 'PROCESSING')) {
+    docPollTimer = setTimeout(loadDocs, 5000)
+  }
+}
+// Sidebar 上传成功后通过全局事件通知刷新（新文档是 PROCESSING，会触发上面的轮询）
+function onDocsUpdated() { loadDocs() }
 async function removeDoc(id) { if (confirm('确定删除？')) { try { await deleteDoc(id); loadDocs() } catch (e) { } } }
 async function viewDoc(id) {
   try {
@@ -185,11 +201,17 @@ watch(() => chat.messages.length, () => nextTick(() => msgEnd.value?.scrollIntoV
 watch(() => chat.messages[chat.messages.length - 1]?.content?.length, () => nextTick(() => msgEnd.value?.scrollIntoView({ behavior: 'smooth' })))
 
 onMounted(async () => {
+  window.addEventListener('docs-updated', onDocsUpdated)
   await kb.load()
   await kb.loadPerms()
   await chat.loadSessions()
   await chat.switchSession(chat.sessionId)
   await chat.refreshTokenStats()
   await chat.refreshNotifCount()
+})
+
+onUnmounted(() => {
+  clearTimeout(docPollTimer)
+  window.removeEventListener('docs-updated', onDocsUpdated)
 })
 </script>

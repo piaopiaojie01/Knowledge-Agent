@@ -35,13 +35,21 @@
 
     <div class="upload-area">
       <div class="section-label" style="font-size:11px;color:#64748b;margin-bottom:6px">上传文档</div>
-      <div class="upload-dropzone"
+      <div class="upload-dropzone" :class="{ dragging: isDragging }"
         @click="fileInput.click()"
-        @dragover.prevent
+        @dragenter.prevent="isDragging = true"
+        @dragover.prevent="isDragging = true"
+        @dragleave.prevent="isDragging = false"
         @drop.prevent="onDrop">
-        📂 点击或拖拽文件到此处<br>
-        <small style="color:#64748b;font-size:10px">支持 TXT / Markdown / PDF</small>
-        <input ref="fileInput" type="file" accept=".txt,.md,.pdf" @change="handleFile" @click.stop hidden />
+        <template v-if="file">
+          📄 {{ file.name }}<br>
+          <small style="color:#64748b;font-size:10px">已选择，点击可更换</small>
+        </template>
+        <template v-else>
+          📂 点击或拖拽文件到此处<br>
+          <small style="color:#64748b;font-size:10px">支持 TXT / Markdown / PDF / 图片</small>
+        </template>
+        <input ref="fileInput" type="file" accept=".txt,.md,.pdf,.png,.jpg,.jpeg" @change="handleFile" @click.stop hidden />
       </div>
       <button class="upload-submit-btn" @click="doUpload" :disabled="!file">⬆ 上传并入库</button>
     </div>
@@ -57,6 +65,7 @@ const kb = useKBStore()
 const chat = useChatStore()
 const file = ref(null)
 const fileInput = ref(null)
+const isDragging = ref(false)
 
 function createKb() {
   const name = prompt('知识库名称:')
@@ -82,8 +91,14 @@ async function editKb(k) {
 
 function handleFile(e) { file.value = e.target.files[0] }
 function onDrop(e) {
-  const dropped = e.dataTransfer?.files?.[0]
-  if (dropped) file.value = dropped
+  isDragging.value = false
+  const dt = e.dataTransfer
+  const dropped = dt?.files?.[0]
+  if (dropped) { file.value = dropped; return }
+  // 某些来源（企业微信/QQ 等）文件不在 files 里而在 items 里
+  const item = [...(dt?.items || [])].find(i => i.kind === 'file')
+  const f = item?.getAsFile()
+  if (f) file.value = f
 }
 async function doUpload() {
   if (!file.value) return
@@ -103,6 +118,8 @@ async function doUpload() {
     } catch (e) { failNames.push(name) }
   }
   await kb.load()
+  // 通知文档列表刷新（Chat.vue 监听；新文档处于解析中，会自动轮询落定）
+  if (okNames.length) window.dispatchEvent(new Event('docs-updated'))
   if (failNames.length) {
     alert(`成功 ${okNames.length} 个，失败 ${failNames.length} 个：${failNames.join('、')}`)
     return  // 有失败时保留文件，便于重试

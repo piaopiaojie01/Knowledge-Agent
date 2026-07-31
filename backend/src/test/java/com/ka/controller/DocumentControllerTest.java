@@ -166,10 +166,71 @@ class DocumentControllerTest {
 
         assertEquals(200, resp.getCode());
         ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
-        verify(documentRepository).save(captor.capture());
+        // 受理成功会二次落库（初始 ACTIVE → PROCESSING），取任意一次检查标题即可
+        verify(documentRepository, times(2)).save(captor.capture());
         String title = captor.getValue().getTitle();
         assertEquals(500, title.length(), "标题应截断到 500 字符");
         assertTrue(title.endsWith(".txt"), "截断后应保留扩展名");
+    }
+
+    @Test
+    void 上传受理成功后docStatus为PROCESSING而非ACTIVE() throws IOException {
+        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
+        mockFile(bytes, "a.txt");
+        when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
+                .thenReturn(Optional.empty());
+        when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(1);
+        when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
+            Document d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(1L);
+            return d;
+        });
+        when(agentClient.ingest(any(), any(), any(), any()))
+                .thenReturn(new AgentClient.IngestResponse(true, "ok", "processing"));
+
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+
+        assertEquals(200, resp.getCode());
+        assertTrue(resp.getMessage().contains("正在后台解析入库"));
+        assertEquals("PROCESSING", resp.getData().getDocStatus(), "agent 受理后应处于 PROCESSING，等待轮询落定");
+    }
+
+    @Test
+    void 上传受理失败时docStatus为FAILED() throws IOException {
+        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
+        mockFile(bytes, "a.txt");
+        when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
+                .thenReturn(Optional.empty());
+        when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(1);
+        when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
+            Document d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(1L);
+            return d;
+        });
+        when(agentClient.ingest(any(), any(), any(), any()))
+                .thenReturn(new AgentClient.IngestResponse(false, "Agent 不可达", null));
+
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+
+        assertEquals(200, resp.getCode());
+        assertEquals("FAILED", resp.getData().getDocStatus());
+    }
+
+    @Test
+    void PUT内容变更重新向量化受理成功后docStatus为PROCESSING() {
+        Document doc = Document.builder().id(1L).kbId(10L).fileType("text")
+                .content("old").version(1).docStatus("ACTIVE").build();
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(doc));
+        when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
+                .thenReturn(Optional.empty());
+        when(documentRepository.save(any(Document.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(agentClient.ingest(any(), any(), any(), any()))
+                .thenReturn(new AgentClient.IngestResponse(true, "ok", "processing"));
+
+        ApiResponse<DocumentDTO> resp = controller.update(1L, Map.of("content", "new content"));
+
+        assertEquals(200, resp.getCode());
+        assertEquals("PROCESSING", resp.getData().getDocStatus());
     }
 
     @Test

@@ -98,6 +98,7 @@ body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:#0b1120;colo
 .upload-area{margin-top:auto;padding-top:16px;border-top:1px solid #1e293b}
 .upload-dropzone{position:relative;border:2px dashed #1e293b;border-radius:14px;padding:24px 18px;text-align:center;cursor:pointer;transition:all .25s}
 .upload-dropzone:hover{border-color:#3b82f6;background:rgba(59,130,246,.04)}
+.upload-dropzone.dragging{border-color:#3b82f6;background:rgba(59,130,246,.12)}
 .upload-dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
 .upload-submit-btn{width:100%;margin-top:10px;padding:11px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:10px;font-size:13px;cursor:pointer;font-weight:600;transition:all .2s}
 .upload-submit-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,.35)}

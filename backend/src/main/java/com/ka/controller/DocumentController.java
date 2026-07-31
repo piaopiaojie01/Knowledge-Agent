@@ -129,17 +129,27 @@ public class DocumentController {
             return ApiResponse.error(409, "文档已存在");
         }
 
-        // 同步向量化：文本/PDF 走 ingest，图片走 ingestImage（OCR 由 Agent 侧完成）
-        AgentClient.IngestResponse ingestResp = isImage
-                ? agentClient.ingestImage(doc.getId(), filename, kb.getName(), bytes)
-                : agentClient.ingest(doc.getId(), filename, kb.getName(), content);
+        // 同步向量化：文本走 ingest（纯文本）；PDF/图片走 Agent 专用管线
+        // （pymupdf 结构化提取 + 扫描件 OCR 兜底），后端 pdfbox 文本仅用于预览和 MySQL 全文搜索
+        AgentClient.IngestResponse ingestResp;
+        if (isImage) {
+            ingestResp = agentClient.ingestImage(doc.getId(), filename, kb.getName(), bytes);
+        } else if ("pdf".equals(fileType)) {
+            ingestResp = agentClient.ingestPdf(doc.getId(), filename, kb.getName(), bytes);
+        } else {
+            ingestResp = agentClient.ingest(doc.getId(), filename, kb.getName(), content);
+        }
         if (!ingestResp.isSuccess()) {
-            log.error("文档向量化失败: docId={}, message={}", doc.getId(), ingestResp.getMessage());
+            log.error("文档向量化受理失败: docId={}, message={}", doc.getId(), ingestResp.getMessage());
             doc.setDocStatus("FAILED");
+            doc = documentRepository.save(doc);
+        } else {
+            // agent 已受理，实际向量化在后台线程执行，最终状态由 IngestStatusPoller 轮询落定
+            doc.setDocStatus("PROCESSING");
             doc = documentRepository.save(doc);
         }
 
-        return ApiResponse.success("上传成功", toDTO(doc));
+        return ApiResponse.success("上传成功，正在后台解析入库", toDTO(doc));
     }
 
     @DeleteMapping("/{id}")
@@ -210,8 +220,12 @@ public class DocumentController {
             agentClient.deleteByDoc(id);
             AgentClient.IngestResponse ingestResp = agentClient.ingest(id, doc.getTitle(), kb.getName(), newContent);
             if (!ingestResp.isSuccess()) {
-                log.error("文档更新后重新向量化失败: docId={}, message={}", id, ingestResp.getMessage());
+                log.error("文档更新后重新向量化受理失败: docId={}, message={}", id, ingestResp.getMessage());
                 doc.setDocStatus("FAILED");
+                doc = documentRepository.save(doc);
+            } else {
+                // agent 已受理，重新向量化在后台进行，由 IngestStatusPoller 轮询落定
+                doc.setDocStatus("PROCESSING");
                 doc = documentRepository.save(doc);
             }
         }

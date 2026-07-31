@@ -84,8 +84,24 @@ public class AgentClient {
     public IngestResponse ingestImage(Long docId, String title, String kbName, byte[] imgBytes) {
         Map<String, Object> body = new HashMap<>();
         body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName);
-        body.put("image_base64", java.util.Base64.getEncoder().encodeToString(imgBytes));
+        // agent 侧 /ingest-image 复用 PdfUpload 模型，字段名是 pdf_base64（图片字节也放这里）
+        body.put("pdf_base64", java.util.Base64.getEncoder().encodeToString(imgBytes));
         return postIngest("/api/v1/rag/ingest-image", body);
+    }
+
+    /** 查询后台入库任务状态；agent 不可达/无记录时返回 status=unknown，不抛异常 */
+    public IngestStatusResponse ingestStatus(Long docId) {
+        try {
+            Map<String, Object> rb = restTemplate.getForEntity(
+                    agentBaseUrl + "/api/v1/rag/ingest/" + docId + "/status", Map.class).getBody();
+            if (rb == null) return new IngestStatusResponse("unknown", "Agent 空", 0);
+            return new IngestStatusResponse(
+                    (String) rb.getOrDefault("status", "unknown"),
+                    (String) rb.getOrDefault("message", ""), toInt(rb.get("inserted")));
+        } catch (RestClientException e) {
+            log.warn("ingestStatus 查询失败: docId={}, error={}", docId, e.getMessage());
+            return new IngestStatusResponse("unknown", e.getMessage(), 0);
+        }
     }
 
     public void deleteByKb(String kbName) {
@@ -128,6 +144,11 @@ public class AgentClient {
     @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor
     public static class IngestResponse {
         private boolean success; private String message; private String status;
+    }
+
+    @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor
+    public static class IngestStatusResponse {
+        private String status; private String message; private Integer inserted;
     }
 
 }

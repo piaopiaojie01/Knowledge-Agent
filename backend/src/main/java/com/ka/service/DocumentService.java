@@ -21,7 +21,8 @@ public class DocumentService {
 
     public List<DocumentDTO> listByKb(Long kbId, Long userId) {
         checkReadAccess(kbId, userId);
-        List<Document> docs = documentRepository.findByKbIdAndDocStatus(kbId, "ACTIVE");
+        List<Document> docs = documentRepository.findByKbIdAndDocStatusIn(
+                kbId, List.of("ACTIVE", "PROCESSING", "FAILED"));
         // 列表接口不返回 content，避免响应过大
         return docs.stream().map(this::toListDTO).collect(Collectors.toList());
     }

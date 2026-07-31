@@ -13,6 +13,12 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     List<Document> findByKbIdAndDocStatus(Long kbId, String docStatus);
 
+    /** 按多个状态查询（列表页需要同时展示 PROCESSING/FAILED/ACTIVE） */
+    List<Document> findByKbIdAndDocStatusIn(Long kbId, List<String> docStatuses);
+
+    /** 状态轮询器用：查全部指定状态的文档（无匹配时零开销返回空列表） */
+    List<Document> findByDocStatus(String docStatus);
+
     List<Document> findByKbId(Long kbId);
 
     /** 同 KB 下按内容哈希查找 ACTIVE 文档（上传去重） */

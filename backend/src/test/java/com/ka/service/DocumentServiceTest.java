@@ -77,7 +77,7 @@ class DocumentServiceTest {
     void listByKb返回的DTO不含content() {
         Document doc = Document.builder().id(1L).kbId(10L).title("t")
                 .content("大段正文内容").fileType("text").docStatus("ACTIVE").build();
-        when(documentRepository.findByKbIdAndDocStatus(10L, "ACTIVE")).thenReturn(List.of(doc));
+        when(documentRepository.findByKbIdAndDocStatusIn(eq(10L), anyList())).thenReturn(List.of(doc));
 
         List<DocumentDTO> list = documentService.listByKb(10L, 1L);
 
