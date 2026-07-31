@@ -1,0 +1,23 @@
+        },
+    {
+        "type": "function",
+        "function": {
+            "name": "make_chart",
+            "description": "生成图表图片（柱状图/折线图/饼图/环形图等），返回图片URL（基于 quickchart.io 免费API）",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "description": "图表类型：bar/line/pie/doughnut/radar/polarArea"},
+                    "title": {"type": "string", "description": "图表标题"},
+                    "labels": {"type": "string", "description": "标签，逗号分隔，如 '一月,二月,三月'"},
+                    "data": {"type": "string", "description": "数据，逗号分隔，如 '30,50,80'"},
+                    "unit": {"type": "string", "description": "单位，如 '件/元/人'"}
+                },
+                "required": ["type", "labels", "data"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "make_icon",

@@ -1,0 +1,26 @@
+[Unit]
+Description=Knowledge Agent Python Service
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ka
+Group=ka
+WorkingDirectory=/opt/knowledge-agent/agent
+Environment="KA_EMBEDDING_DEVICE=cuda"
+Environment="HF_HUB_OFFLINE=1"
+ExecStart=/opt/knowledge-agent/agent/.venv/bin/python main.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/ka/agent.log
+StandardError=append:/var/log/ka/agent.log
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/ka /opt/knowledge-agent/agent/data
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

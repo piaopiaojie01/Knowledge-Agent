@@ -1,0 +1,132 @@
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Segoe UI","Microsoft YaHei",sans-serif;background:#0b1120;color:#e2e8f0;height:100vh;overflow:hidden}
+#app{display:flex;height:100vh}
+
+/* ── Login ── */
+.login-overlay{position:fixed;inset:0;background:rgba(11,17,32,.98);display:flex;align-items:center;justify-content:center;z-index:100}
+.login-box{background:#111827;padding:48px 44px;border-radius:20px;width:400px;border:1px solid #1e293b;box-shadow:0 25px 80px rgba(0,0,0,.5)}
+.login-box h2{color:#e2e8f0;margin-bottom:4px;text-align:center;font-size:24px;font-weight:700}
+.login-box .sub{color:#64748b;font-size:13px;text-align:center;margin-bottom:28px}
+.login-box input{width:100%;padding:13px 16px;border:1px solid #1e293b;border-radius:10px;background:#0b1120;color:#e2e8f0;font-size:14px;margin-bottom:14px;transition:border .2s}
+.login-box input:focus{outline:none;border-color:#3b82f6}
+.login-box button{width:100%;padding:13px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:10px;font-size:15px;cursor:pointer;font-weight:700;transition:all .2s}
+.login-box button:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,.35)}
+.login-box button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.login-box .error{color:#ef4444;font-size:13px;margin-top:12px;text-align:center}
+
+/* ── Layout ── */
+.sidebar{width:300px;min-width:300px;background:#111827;padding:20px;display:flex;flex-direction:column;border-right:1px solid #1e293b;overflow-y:auto}
+.main-area{flex:1;display:flex;flex-direction:column;min-width:0}
+
+/* ── Sidebar ── */
+.sidebar h2{font-size:15px;margin-bottom:14px;color:#e2e8f0;display:flex;align-items:center;justify-content:space-between}
+.sidebar h2 button{font-size:11px;padding:5px 10px;background:#1d4ed8;color:#fff;border:none;border-radius:5px;cursor:pointer;font-weight:600}
+.sidebar input[type=text]{width:100%;padding:9px 12px;border:1px solid #1e293b;border-radius:8px;background:#0b1120;color:#e2e8f0;font-size:13px;margin-bottom:10px}
+.kb-item{padding:9px 12px;border-radius:8px;cursor:pointer;margin-bottom:2px;font-size:13px;display:flex;align-items:center;justify-content:space-between}
+.kb-item:hover{background:#1e293b}
+.kb-item .kb-actions span{visibility:hidden}
+.kb-item:hover .kb-actions span{visibility:visible}
+.kb-item.active{background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.3)}
+
+/* ── Conv List ── */
+.conv-section{margin-bottom:12px;border-bottom:1px solid #1e293b;padding-bottom:8px}
+.conv-section .title-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.conv-section .title-row span{font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.conv-section .title-row button{font-size:10px;padding:3px 8px;background:#1d4ed8;color:#fff;border:none;border-radius:4px;cursor:pointer}
+.conv-item{display:flex;justify-content:space-between;align-items:center;padding:4px 8px;border-radius:4px;font-size:12px;cursor:pointer;color:#94a3b8}
+.conv-item:hover{background:#1e293b}
+.conv-item.active{background:rgba(59,130,246,.15);color:#3b82f6}
+.conv-item .conv-title{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.conv-item .conv-actions{display:flex;gap:2px}
+.conv-item .conv-actions span{cursor:pointer;padding:0 4px;font-size:12px}
+.conv-item .conv-actions .rename{color:#64748b}
+.conv-item .conv-actions .del{color:#ef4444;font-size:14px}
+
+/* ── Header ── */
+.header{padding:14px 24px;background:#111827;border-bottom:1px solid #1e293b;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+.header h1{font-size:15px;color:#e2e8f0;font-weight:700}
+.header-right{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.tabs{display:flex;gap:2px;background:#0b1120;border-radius:8px;padding:2px}
+.tab{padding:6px 16px;font-size:12px;color:#64748b;cursor:pointer;border-radius:6px;font-weight:600;transition:all .15s}
+.tab.active{background:#1d4ed8;color:#fff}
+.status{display:flex;gap:14px;font-size:12px;color:#64748b}
+.status span{display:flex;align-items:center;gap:5px}
+.dot{width:7px;height:7px;border-radius:50%;background:#ef4444}
+.dot.on{background:#22c55e;box-shadow:0 0 5px rgba(34,197,94,.4)}
+.token-badge{color:#22c55e;font-weight:600;font-size:11px;background:rgba(34,197,94,.1);padding:2px 8px;border-radius:4px}
+
+/* ── Messages ── */
+.messages{flex:1;overflow-y:auto;padding:24px 32px}
+.msg{max-width:78%;margin-bottom:20px;padding:14px 20px;border-radius:16px;font-size:14px;line-height:1.75;animation:msgIn .25s ease;word-break:break-word}
+@keyframes msgIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{background:linear-gradient(135deg,#2563eb,#4f46e5);margin-left:auto;border-bottom-right-radius:4px}
+.msg.agent{background:#111827;border:1px solid #1e293b;border-bottom-left-radius:4px}
+.msg img{max-width:100%;border-radius:8px;margin:8px 0}
+
+/* ── Markdown / Code ── */
+.msg pre{background:#0b1120;border:1px solid #1e293b;border-radius:8px;padding:12px 14px;overflow-x:auto;margin:10px 0}
+.msg pre code{background:transparent;padding:0;font-size:12.5px;color:#cbd5e1;font-family:Consolas,Monaco,monospace}
+.msg code{background:#0b1120;border-radius:4px;padding:2px 6px;font-size:12.5px;color:#7dd3fc;font-family:Consolas,Monaco,monospace}
+.msg p{margin:6px 0}
+.msg ul,.msg ol{margin:6px 0 6px 20px}
+.msg table{border-collapse:collapse;margin:8px 0;font-size:13px}
+.msg th,.msg td{border:1px solid #1e293b;padding:6px 12px}
+.msg blockquote{border-left:3px solid #1e293b;margin:8px 0;padding-left:12px;color:#94a3b8}
+
+/* ── Feedback ── */
+.fb-row{display:flex;gap:8px;margin-top:10px;font-size:14px}
+.fb-btn{cursor:pointer;opacity:.5;transition:all .15s}
+.fb-btn:hover{opacity:1;transform:scale(1.15)}
+.fb-btn.done{cursor:default;opacity:.35}
+.fb-btn.done:hover{transform:none}
+.fb-btn.active{opacity:1;filter:drop-shadow(0 0 4px rgba(59,130,246,.6))}
+.msg .src-block{margin-top:14px;padding-top:12px;border-top:1px solid #1e293b;font-size:12px;color:#64748b}
+.msg .src-head{font-weight:600;margin-bottom:6px;color:#475569}
+.msg .src-item{margin:4px 0;display:flex;align-items:baseline;gap:6px}
+.msg .src-dot{color:#3b82f6}
+.msg .src-pct{color:#3b82f6;font-weight:600;font-size:11px;margin-left:auto}
+
+/* ── Input ── */
+.input-area{padding:16px 24px;background:#111827;border-top:1px solid #1e293b;display:flex;gap:12px}
+.input-area textarea{flex:1;padding:14px 18px;border:1px solid #1e293b;border-radius:12px;background:#0b1120;color:#e2e8f0;font-size:14px;resize:none;min-height:50px;max-height:120px;font-family:inherit;transition:border .2s}
+.input-area textarea:focus{outline:none;border-color:#3b82f6}
+.input-area button{padding:14px 28px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:12px;font-size:14px;cursor:pointer;font-weight:700;transition:all .2s}
+.input-area button:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,.35)}
+.input-area button:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+/* ── Upload Area ── */
+.upload-area{margin-top:auto;padding-top:16px;border-top:1px solid #1e293b}
+.upload-dropzone{position:relative;border:2px dashed #1e293b;border-radius:14px;padding:24px 18px;text-align:center;cursor:pointer;transition:all .25s}
+.upload-dropzone:hover{border-color:#3b82f6;background:rgba(59,130,246,.04)}
+.upload-dropzone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer}
+.upload-submit-btn{width:100%;margin-top:10px;padding:11px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:10px;font-size:13px;cursor:pointer;font-weight:600;transition:all .2s}
+.upload-submit-btn:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(37,99,235,.35)}
+.upload-submit-btn:disabled{opacity:.5;cursor:not-allowed}
+
+/* ── Admin Panel ── */
+.admin-overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:99;display:flex;justify-content:center;align-items:center}
+.admin-box{background:#111827;border-radius:16px;padding:32px;width:620px;max-height:80vh;overflow-y:auto;border:1px solid #1e293b}
+.admin-box h3{color:#e2e8f0;margin-bottom:14px;display:flex;justify-content:space-between}
+table.doc-table{width:100%;border-collapse:collapse;font-size:13px}
+.doc-table th{text-align:left;padding:10px 14px;color:#64748b;border-bottom:1px solid #1e293b;font-size:11px;text-transform:uppercase}
+.doc-table td{padding:12px 14px;border-bottom:1px solid #0f172a;color:#cbd5e1}
+.doc-table tr:hover td{background:rgba(30,41,59,.5)}
+
+/* ── Spin ── */
+.spin{display:inline-block;width:16px;height:16px;border:2px solid rgba(255,255,255,.25);border-top-color:#fff;border-radius:50%;animation:spin .6s linear infinite;margin-right:8px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar{width:5px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#1e293b;border-radius:3px}
+
+/* ── Mobile ── */
+@media (max-width:768px){
+  #app{flex-direction:column}
+  .sidebar{width:100%!important;min-width:100%!important;max-height:40vh;border-right:none;border-bottom:1px solid #1e293b}
+  .messages{padding:16px 12px}
+  .msg{max-width:92%!important;font-size:13px}
+  .input-area{padding:10px 12px;gap:8px}
+  .header{padding:10px 14px}
+}

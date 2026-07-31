@@ -1,0 +1,133 @@
+package com.ka.client;
+
+import lombok.Data;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.*;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.client.RestClientException;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+@Slf4j
+@Component
+public class AgentClient {
+
+    private final RestTemplate restTemplate;
+    private final String agentBaseUrl;
+
+    public AgentClient(@Value("${agent.base-url}") String agentBaseUrl,
+                       @Value("${agent.connect-timeout:5000}") int connectTimeout,
+                       @Value("${agent.read-timeout:60000}") int readTimeout) {
+        this.agentBaseUrl = agentBaseUrl != null && agentBaseUrl.endsWith("/")
+                ? agentBaseUrl.substring(0, agentBaseUrl.length() - 1)
+                : agentBaseUrl;
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(connectTimeout);
+        factory.setReadTimeout(readTimeout);
+        this.restTemplate = new RestTemplate(factory);
+    }
+
+    public AgentQueryResponse ragQuery(String question, List<String> kbNames,
+                                        List<Map<String, String>> history, String sessionId) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("question", question);
+        body.put("kb_names", kbNames != null ? kbNames : List.of());
+        body.put("history", history != null ? history : List.of());
+        body.put("session_id", sessionId != null ? sessionId : "");
+        try {
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
+            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/query", req, Map.class).getBody();
+            if (rb == null) return AgentQueryResponse.builder().success(false).answer("Agent 空").build();
+            return AgentQueryResponse.builder().success(true)
+                    .answer((String) rb.getOrDefault("answer", ""))
+                    .sources((List<Map<String, Object>>) rb.getOrDefault("sources", List.of()))
+                    .metrics((Map<String, Object>) rb.get("metrics"))
+                    .inputTokens(toInt(rb.get("input_tokens")))
+                    .outputTokens(toInt(rb.get("output_tokens"))).build();
+        } catch (RestClientException e) {
+            return AgentQueryResponse.builder().success(false).answer("Agent 失败: " + e.getMessage()).build();
+        }
+    }
+
+    public AgentQueryResponse ragSearch(String question, List<String> kbNames) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("question", question); body.put("kb_names", kbNames != null ? kbNames : List.of()); body.put("top_k", 5);
+        try {
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
+            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/search", req, Map.class).getBody();
+            if (rb == null) return AgentQueryResponse.builder().success(false).answer("Agent 空").build();
+            return AgentQueryResponse.builder().success(true)
+                    .sources((List<Map<String, Object>>) rb.getOrDefault("results", List.of())).build();
+        } catch (RestClientException e) {
+            return AgentQueryResponse.builder().success(false).answer("Agent 失败: " + e.getMessage()).build();
+        }
+    }
+
+    public IngestResponse ingest(Long docId, String title, String kbName, String content) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName); body.put("content", content);
+        return postIngest("/api/v1/rag/ingest", body);
+    }
+
+    public IngestResponse ingestPdf(Long docId, String title, String kbName, byte[] pdfBytes) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName);
+        body.put("pdf_base64", java.util.Base64.getEncoder().encodeToString(pdfBytes));
+        return postIngest("/api/v1/rag/ingest-pdf", body);
+    }
+
+    public IngestResponse ingestImage(Long docId, String title, String kbName, byte[] imgBytes) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName);
+        body.put("image_base64", java.util.Base64.getEncoder().encodeToString(imgBytes));
+        return postIngest("/api/v1/rag/ingest-image", body);
+    }
+
+    public void deleteByKb(String kbName) {
+        Map<String, Object> body = new HashMap<>(); body.put("kb_name", kbName);
+        try { restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/delete-by-kb", new HttpEntity<>(body, jsonHeaders()), Map.class); } catch (Exception e) { log.warn("deleteByKb failed: {}", e.getMessage()); }
+    }
+
+    public void deleteByDoc(Long docId) {
+        Map<String, Object> body = new HashMap<>(); body.put("doc_id", docId);
+        try {
+            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/delete-by-doc", new HttpEntity<>(body, jsonHeaders()), Map.class).getBody();
+            if (rb != null && Boolean.FALSE.equals(rb.get("success"))) {
+                log.warn("deleteByDoc agent 返回失败: docId={}, error={}", docId, rb.get("error"));
+            }
+        } catch (Exception e) { log.warn("deleteByDoc failed: {}", e.getMessage()); }
+    }
+
+    private IngestResponse postIngest(String url, Map<String, Object> body) {
+        try {
+            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
+            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + url, req, Map.class).getBody();
+            if (rb == null) return new IngestResponse(false, "Agent 空", null);
+            return new IngestResponse((boolean) rb.getOrDefault("success", false),
+                    (String) rb.getOrDefault("message", ""), (String) rb.getOrDefault("status", "unknown"));
+        } catch (RestClientException e) { return new IngestResponse(false, e.getMessage(), null); }
+    }
+
+    private HttpHeaders jsonHeaders() { return new HttpHeaders() {{ setContentType(MediaType.APPLICATION_JSON); }}; }
+    private int toInt(Object o) { if (o instanceof Number n) return n.intValue(); return 0; }
+
+
+    @Data @lombok.Builder @lombok.NoArgsConstructor @lombok.AllArgsConstructor
+    public static class AgentQueryResponse {
+        private boolean success; private String answer;
+        private java.util.List<java.util.Map<String, Object>> sources;
+        private java.util.Map<String, Object> metrics;
+        private int inputTokens; private int outputTokens;
+    }
+
+    @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor
+    public static class IngestResponse {
+        private boolean success; private String message; private String status;
+    }
+
+}

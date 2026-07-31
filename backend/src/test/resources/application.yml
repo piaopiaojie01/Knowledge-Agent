@@ -1,0 +1,20 @@
+# 测试环境配置：使用 H2 内存库（MySQL 兼容模式以支持 LONGTEXT 等列定义），
+# 不连真实 MySQL / Redis / Agent 服务；JWT secret 给占位值即可（切片测试不会用到）。
+spring:
+  datasource:
+    url: jdbc:h2:mem:ka-test;MODE=MySQL;DB_CLOSE_DELAY=-1;NON_KEYWORDS=USER
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    show-sql: false
+    open-in-view: false
+
+jwt:
+  secret: test-only-secret-key-for-unit-tests-0123456789abcdef0123456789abcdef
+  expiration: 86400000
+
+agent:
+  base-url: http://localhost:0

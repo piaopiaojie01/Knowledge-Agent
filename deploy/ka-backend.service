@@ -1,0 +1,25 @@
+[Unit]
+Description=Knowledge Agent Backend (Spring Boot)
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=ka
+Group=ka
+WorkingDirectory=/opt/knowledge-agent/backend
+ExecStart=/usr/bin/java -jar -Xms512m -Xmx1024m target/knowledge-agent-backend-1.0.0.jar
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/ka/backend.log
+StandardError=append:/var/log/ka/backend.log
+
+# 安全加固
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/log/ka /tmp
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

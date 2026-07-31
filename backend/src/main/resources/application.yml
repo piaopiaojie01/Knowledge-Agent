@@ -1,0 +1,68 @@
+spring:
+
+  mail:
+    host: smtp.qq.com
+    port: 587
+    username: ${MAIL_USER:}
+    password: ${MAIL_PASS:}
+    properties:
+      mail.smtp.auth: true
+      mail.smtp.starttls.enable: true
+      mail.smtp.starttls.required: true
+    to: ${MAIL_TO:admin@company.com}
+
+  application:
+    name: knowledge-agent-backend
+
+  servlet:
+    multipart:
+      max-file-size: 500MB
+      max-request-size: 500MB
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
+        format_sql: true
+
+  jackson:
+    default-property-inclusion: non_null
+
+  http:
+    encoding:
+      charset: UTF-8
+      force: true
+
+  messages:
+    encoding: UTF-8
+
+jwt:
+  # 生产环境必须通过 JWT_SECRET 环境变量注入，不提供默认值（缺失即启动失败）
+  secret: ${JWT_SECRET}
+  expiration: 86400000
+
+agent:
+  base-url: ${AGENT_URL:http://localhost:8000}
+  connect-timeout: 5000
+  read-timeout: 60000
+
+# ==== 应用业务常量（消除硬编码）====
+ka:
+  cors-origins:
+    - http://localhost:8080
+    - http://localhost:3000
+    - https://knowledge-agent.your-company.com
+  rate-limit-rpm: 60
+  rate-limit-whitelist:
+    - /api/auth/login
+    - /api/auth/refresh
+    - /api/health
+    - /favicon.ico
+  login-max-failures: 5
+  login-lock-minutes: 30
+  audit-retention-days: 365
+  password-min-length: 8
