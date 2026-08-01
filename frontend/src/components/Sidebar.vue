@@ -51,13 +51,20 @@
         </template>
         <input ref="fileInput" type="file" accept=".txt,.md,.pdf,.png,.jpg,.jpeg" @change="handleFile" @click.stop hidden />
       </div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#64748b">
+        解析设备
+        <select v-model="parseDevice" style="flex:1;background:#0b1120;color:#e2e8f0;border:1px solid #1e293b;border-radius:6px;padding:4px 6px;font-size:11px">
+          <option value="cpu">CPU（兼容性好）</option>
+          <option value="cuda">GPU（扫描件更快）</option>
+        </select>
+      </div>
       <button class="upload-submit-btn" @click="doUpload" :disabled="!file">⬆ 上传并入库</button>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { useKBStore } from '../stores/kb'
 import { useChatStore } from '../stores/chat'
 import { uploadDoc } from '../api'
@@ -66,6 +73,9 @@ const chat = useChatStore()
 const file = ref(null)
 const fileInput = ref(null)
 const isDragging = ref(false)
+// 解析设备选择，持久化到 localStorage
+const parseDevice = ref(localStorage.getItem('parseDevice') || 'cpu')
+watch(parseDevice, v => localStorage.setItem('parseDevice', v))
 
 function createKb() {
   const name = prompt('知识库名称:')
@@ -112,6 +122,7 @@ async function doUpload() {
       const fd = new FormData()
       fd.append('file', file.value)
       fd.append('kbId', kbId)
+      fd.append('device', parseDevice.value)
       const { data } = await uploadDoc(fd)
       if (data.code === 200) okNames.push(name)
       else failNames.push(name)

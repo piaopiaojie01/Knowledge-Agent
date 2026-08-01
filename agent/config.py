@@ -14,7 +14,10 @@ class Settings(BaseSettings):
 
     embedding_model: str = "BAAI/bge-small-zh-v1.5"
     embedding_dim: int = 512
+    # 推理设备：cpu / cuda（有 NVIDIA GPU 时在 .env 里改成 cuda 可大幅提速）
     embedding_device: str = "cpu"
+    ocr_device: str = "cpu"
+    reranker_device: str = "cpu"
 
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"

@@ -74,18 +74,20 @@ public class AgentClient {
         return postIngest("/api/v1/rag/ingest", body);
     }
 
-    public IngestResponse ingestPdf(Long docId, String title, String kbName, byte[] pdfBytes) {
+    public IngestResponse ingestPdf(Long docId, String title, String kbName, byte[] pdfBytes, String device) {
         Map<String, Object> body = new HashMap<>();
         body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName);
         body.put("pdf_base64", java.util.Base64.getEncoder().encodeToString(pdfBytes));
+        if (device != null) body.put("device", device);  // cpu / cuda，null 时用服务端默认
         return postIngest("/api/v1/rag/ingest-pdf", body);
     }
 
-    public IngestResponse ingestImage(Long docId, String title, String kbName, byte[] imgBytes) {
+    public IngestResponse ingestImage(Long docId, String title, String kbName, byte[] imgBytes, String device) {
         Map<String, Object> body = new HashMap<>();
         body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName);
         // agent 侧 /ingest-image 复用 PdfUpload 模型，字段名是 pdf_base64（图片字节也放这里）
         body.put("pdf_base64", java.util.Base64.getEncoder().encodeToString(imgBytes));
+        if (device != null) body.put("device", device);
         return postIngest("/api/v1/rag/ingest-image", body);
     }
 

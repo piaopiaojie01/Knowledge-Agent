@@ -30,8 +30,8 @@ class Reranker:
                 if self._model is None and time.time() - self._load_failed_at > LOAD_RETRY_COOLDOWN:
                     try:
                         from sentence_transformers import CrossEncoder
-                        self._model = CrossEncoder(RERANK_MODEL_NAME, device="cpu")
-                        logger.info(f"重排序模型加载完成: {RERANK_MODEL_NAME}")
+                        self._model = CrossEncoder(RERANK_MODEL_NAME, device=settings.reranker_device)
+                        logger.info(f"重排序模型加载完成: {RERANK_MODEL_NAME} ({settings.reranker_device})")
                     except Exception as e:
                         self._load_failed_at = time.time()
                         logger.warning(f"重排序模型加载失败，降级为分数排序: {e}")

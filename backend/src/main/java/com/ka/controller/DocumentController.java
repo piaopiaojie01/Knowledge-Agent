@@ -64,8 +64,13 @@ public class DocumentController {
 
     @PostMapping("/upload")
     public ApiResponse<DocumentDTO> upload(@RequestParam("file") MultipartFile file,
-                                           @RequestParam("kbId") Long kbId) throws IOException {
+                                           @RequestParam("kbId") Long kbId,
+                                           @RequestParam(value = "device", required = false) String device) throws IOException {
         Long userId = SecurityUtils.getCurrentUserId();
+        // 解析设备白名单：只认 cpu/cuda，其余按 null（用服务端默认）
+        if (device != null && !device.equals("cpu") && !device.equals("cuda")) {
+            return ApiResponse.error(400, "device 只支持 cpu / cuda");
+        }
         if (!hasWriteAccess(kbId, userId)) {
             return ApiResponse.error(403, "无权限向该知识库上传文档");
         }
@@ -133,9 +138,9 @@ public class DocumentController {
         // （pymupdf 结构化提取 + 扫描件 OCR 兜底），后端 pdfbox 文本仅用于预览和 MySQL 全文搜索
         AgentClient.IngestResponse ingestResp;
         if (isImage) {
-            ingestResp = agentClient.ingestImage(doc.getId(), filename, kb.getName(), bytes);
+            ingestResp = agentClient.ingestImage(doc.getId(), filename, kb.getName(), bytes, device);
         } else if ("pdf".equals(fileType)) {
-            ingestResp = agentClient.ingestPdf(doc.getId(), filename, kb.getName(), bytes);
+            ingestResp = agentClient.ingestPdf(doc.getId(), filename, kb.getName(), bytes, device);
         } else {
             ingestResp = agentClient.ingest(doc.getId(), filename, kb.getName(), content);
         }

@@ -79,10 +79,21 @@ class DocumentControllerTest {
     void 上传0字节文件返回400() throws IOException {
         mockFile(new byte[0], "empty.txt");
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(400, resp.getCode());
         assertTrue(resp.getMessage().contains("空文件"));
+        verify(documentRepository, never()).save(any());
+    }
+
+    @Test
+    void 非法device参数返回400() throws IOException {
+        mockFile("hello".getBytes(StandardCharsets.UTF_8), "a.txt");
+
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, "gpu");
+
+        assertEquals(400, resp.getCode());
+        assertTrue(resp.getMessage().contains("cpu / cuda"));
         verify(documentRepository, never()).save(any());
     }
 
@@ -93,7 +104,7 @@ class DocumentControllerTest {
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.of(Document.builder().id(99L).build()));
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(409, resp.getCode());
         assertTrue(resp.getMessage().contains("文档已存在"));
@@ -110,7 +121,7 @@ class DocumentControllerTest {
         // 模拟超限：原子更新影响 0 行
         when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(0);
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(400, resp.getCode());
         assertTrue(resp.getMessage().contains("配额不足"));
@@ -125,7 +136,7 @@ class DocumentControllerTest {
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(400, resp.getCode());
         assertTrue(resp.getMessage().contains("UTF-8"));
@@ -139,7 +150,7 @@ class DocumentControllerTest {
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(400, resp.getCode());
         assertTrue(resp.getMessage().contains("PDF"));
@@ -162,7 +173,7 @@ class DocumentControllerTest {
         when(agentClient.ingest(any(), any(), any(), any()))
                 .thenReturn(new AgentClient.IngestResponse(true, "ok", "ok"));
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(200, resp.getCode());
         ArgumentCaptor<Document> captor = ArgumentCaptor.forClass(Document.class);
@@ -188,7 +199,7 @@ class DocumentControllerTest {
         when(agentClient.ingest(any(), any(), any(), any()))
                 .thenReturn(new AgentClient.IngestResponse(true, "ok", "processing"));
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(200, resp.getCode());
         assertTrue(resp.getMessage().contains("正在后台解析入库"));
@@ -210,7 +221,7 @@ class DocumentControllerTest {
         when(agentClient.ingest(any(), any(), any(), any()))
                 .thenReturn(new AgentClient.IngestResponse(false, "Agent 不可达", null));
 
-        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L);
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
         assertEquals(200, resp.getCode());
         assertEquals("FAILED", resp.getData().getDocStatus());

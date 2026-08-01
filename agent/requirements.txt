@@ -5,6 +5,15 @@ pymilvus==2.3.5
 setuptools<81
 marshmallow<4
 sentence-transformers==3.3.0
+# docling 需要 transformers>=4.49（RT-DETRv2 版面模型）；<5 是 sentence-transformers 3.3 的上限
+transformers>=4.49,<5
+# docling 扫描件 OCR（版面分析 + RapidOCR/PP-OCRv6 中文识别 → 结构化 Markdown）
+docling==2.117.0
+onnxruntime>=1.17
+# transformers 4.55+ 加载 .bin 权重强制 torch>=2.6（CVE-2025-32434）
+# GPU 机器请从 PyTorch 官方源装 CUDA 版：pip install torch==2.6.0+cu124 torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+torch>=2.6
+torchvision>=0.21
 openai==2.49.0
 pydantic==2.13.4
 pydantic-settings==2.14.2

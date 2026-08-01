@@ -13,6 +13,7 @@ from store.milvus_client import milvus_client
 from embedding.bge_embedder import embedder
 from core.document_processor import processor as doc_processor
 from api.delete_routes import delete_by_expr
+from config import settings
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/rag", tags=["Ingest"])
@@ -118,6 +119,7 @@ class PdfUpload(BaseModel):
     title: str
     kb_name: str
     pdf_base64: str
+    device: str | None = None  # cpu / cuda，缺省用服务端配置 ocr_device
 
 
 # ═════════════════════════════════
@@ -249,8 +251,8 @@ def _do_ingest_pdf(req: PdfUpload):
         pdf_bytes = base64.b64decode(req.pdf_base64)
         text = _pdf_to_markdown(pdf_bytes)
         if not text.strip():
-            logger.info(f"PDF 无文字，启用 OCR: {req.title}")
-            text = _ocr_pdf(pdf_bytes)
+            logger.info(f"PDF 无文字，启用 OCR({ _resolve_device(req.device) }): {req.title}")
+            text = _ocr_pdf(pdf_bytes, req.device)
     except Exception as e:
         _set_task(doc_id, {"status": "failed", "message": f"PDF error: {e}"})
         return
@@ -271,12 +273,12 @@ async def ingest_pdf(req: PdfUpload):
 
 
 def _do_ingest_image(req: PdfUpload):
-    """后台线程：图片 OCR（重 CPU）→ 入库"""
+    """后台线程：图片 OCR（重 CPU/GPU）→ 入库"""
     doc_id = req.doc_id
     _set_task(doc_id, {"status": "processing", "total": 0, "done": 0, "message": "图片 OCR 中..."})
     try:
         img_bytes = base64.b64decode(req.pdf_base64)
-        text = _ocr_image(img_bytes)
+        text = _ocr_image(img_bytes, req.device)
     except Exception as e:
         _set_task(doc_id, {"status": "failed", "message": f"Image error: {e}"})
         return
@@ -300,18 +302,65 @@ async def ingest_image(req: PdfUpload):
 # OCR
 # ═════════════════════════════════
 
-_ocr_reader = None
+def _resolve_device(device: str | None) -> str:
+    """请求级设备参数校验：只认 cpu/cuda，缺省或非法值回落服务端配置"""
+    return device if device in ("cpu", "cuda") else settings.ocr_device
 
-def _get_ocr():
-    global _ocr_reader
-    if _ocr_reader is None:
+
+# 按设备分别缓存识别器（CPU/GPU 各一份，避免重复加载模型）
+_ocr_readers: dict = {}
+
+def _get_ocr(device: str | None = None):
+    device = _resolve_device(device)
+    if device not in _ocr_readers:
         import easyocr
-        _ocr_reader = easyocr.Reader(["ch_sim", "en"], gpu=False)
-    return _ocr_reader
+        _ocr_readers[device] = easyocr.Reader(["ch_sim", "en"], gpu=(device == "cuda"))
+    return _ocr_readers[device]
 
-def _ocr_pdf(pdf_bytes: bytes) -> str:
+_docling_converters: dict = {}
+
+def _get_docling(device: str | None = None):
+    """懒加载 Docling 转换器（版面分析 + RapidOCR/PP-OCRv6 中文识别，输出结构化 Markdown）"""
+    device = _resolve_device(device)
+    if device not in _docling_converters:
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.pipeline_options import PdfPipelineOptions, RapidOcrOptions
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.accelerator_options import AcceleratorOptions, AcceleratorDevice
+        opts = PdfPipelineOptions()
+        opts.do_ocr = True
+        # 必须显式指定 RapidOCR：默认 OcrAutoOptions 选错引擎时扫描件几乎识别不出内容
+        opts.ocr_options = RapidOcrOptions()
+        accel = AcceleratorDevice.CUDA if device == "cuda" else AcceleratorDevice.CPU
+        opts.accelerator_options = AcceleratorOptions(device=accel)
+        _docling_converters[device] = DocumentConverter(
+            format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)})
+        logger.info(f"Docling 转换器加载完成（RapidOCR, {device}）")
+    return _docling_converters[device]
+
+def _ocr_pdf(pdf_bytes: bytes, device: str | None = None) -> str:
+    """扫描件 OCR：Docling 版面分析 + RapidOCR，直接产出带标题/表格结构的 Markdown；
+    Docling 异常时降级 easyocr 纯文本"""
+    import tempfile
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            f.write(pdf_bytes)
+            tmp_path = f.name
+        try:
+            result = _get_docling(device).convert(tmp_path)
+            md = result.document.export_to_markdown()
+            if md.strip():
+                return md
+            logger.warning("Docling 输出为空，降级 easyocr")
+        finally:
+            os.unlink(tmp_path)
+    except Exception as e:
+        logger.warning(f"Docling 识别失败，降级 easyocr: {e}")
+    return _ocr_pdf_easyocr(pdf_bytes, device)
+
+def _ocr_pdf_easyocr(pdf_bytes: bytes, device: str | None = None) -> str:
     doc = __import__("pymupdf").open(stream=pdf_bytes, filetype="pdf")
-    reader = _get_ocr()
+    reader = _get_ocr(device)
     lines = []
     for i, page in enumerate(doc):
         pix = page.get_pixmap(dpi=200)
@@ -323,7 +372,7 @@ def _ocr_pdf(pdf_bytes: bytes) -> str:
     doc.close()
     return "\n".join(lines)
 
-def _ocr_image(img_bytes: bytes) -> str:
-    reader = _get_ocr()
+def _ocr_image(img_bytes: bytes, device: str | None = None) -> str:
+    reader = _get_ocr(device)
     results = reader.readtext(img_bytes, detail=0)
     return "\n".join(results)
