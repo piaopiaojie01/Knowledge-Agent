@@ -96,13 +96,14 @@ public class AgentClient {
         try {
             Map<String, Object> rb = restTemplate.getForEntity(
                     agentBaseUrl + "/api/v1/rag/ingest/" + docId + "/status", Map.class).getBody();
-            if (rb == null) return new IngestStatusResponse("unknown", "Agent 空", 0);
+            if (rb == null) return new IngestStatusResponse("unknown", "Agent 空", 0, 0, 0, 0);
             return new IngestStatusResponse(
                     (String) rb.getOrDefault("status", "unknown"),
-                    (String) rb.getOrDefault("message", ""), toInt(rb.get("inserted")));
+                    (String) rb.getOrDefault("message", ""), toInt(rb.get("inserted")),
+                    toInt(rb.get("total")), toInt(rb.get("done")), toInt(rb.get("percent")));
         } catch (RestClientException e) {
             log.warn("ingestStatus 查询失败: docId={}, error={}", docId, e.getMessage());
-            return new IngestStatusResponse("unknown", e.getMessage(), 0);
+            return new IngestStatusResponse("unknown", e.getMessage(), 0, 0, 0, 0);
         }
     }
 
@@ -151,6 +152,9 @@ public class AgentClient {
     @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor
     public static class IngestStatusResponse {
         private String status; private String message; private Integer inserted;
+        private Integer total; private Integer done;
+        /** agent 侧按阶段加权计算的整体百分比（0-100），缺省 0 表示旧版 agent 未上报 */
+        private Integer percent;
     }
 
 }

@@ -68,6 +68,8 @@ public class DocumentService {
                 .fileType(doc.getFileType())
                 .docStatus(doc.getDocStatus())
                 .chunkCount(doc.getChunkCount())
+                .ingestProgress(doc.getIngestProgress())
+                .ingestMessage(doc.getIngestMessage())
                 .createdAt(doc.getCreatedAt())
                 .build();
     }
@@ -81,6 +83,8 @@ public class DocumentService {
                 .fileType(doc.getFileType())
                 .docStatus(doc.getDocStatus())
                 .chunkCount(doc.getChunkCount())
+                .ingestProgress(doc.getIngestProgress())
+                .ingestMessage(doc.getIngestMessage())
                 .createdAt(doc.getCreatedAt())
                 .build();
     }

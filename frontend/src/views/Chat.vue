@@ -49,8 +49,7 @@
               <td><span class="doc-title" @click="viewDoc(d.id)" style="color:#3b82f6;cursor:pointer">{{ d.title }}</span></td>
               <td><span :class="['doc-type', d.fileType]">{{ d.fileType }}</span></td>
               <td>
-                <span v-if="d.docStatus === 'PROCESSING'" style="color:#fbbf24;font-size:12px">解析中…</span>
-                <span v-else-if="d.docStatus === 'FAILED'" style="color:#ef4444;font-size:12px">入库失败</span>
+                <DocStatus :doc="d" />
               </td>
               <td style="color:#64748b">{{ d.chunkCount || 0 }} 分块</td>
               <td style="color:#64748b;font-size:12px">{{ d.createdAt?.substring(0,10) }}</td>
@@ -82,6 +81,16 @@
         </div>
       </div>
     </div>
+    <!-- 入库落定通知（成功/失败），4 秒自动消失 -->
+    <div style="position:fixed;top:20px;right:20px;z-index:1000;display:flex;flex-direction:column;gap:8px">
+      <div v-for="t in toasts" :key="t.id"
+        :style="{ padding:'12px 18px', borderRadius:'10px', fontSize:'13px', maxWidth:'360px', color:'#e2e8f0',
+                  background:'#111827', border:'1px solid ' + (t.type === 'error' ? '#ef4444' : '#22c55e'),
+                  boxShadow:'0 4px 12px rgba(0,0,0,.4)' }">
+        <span :style="{ color: t.type === 'error' ? '#ef4444' : '#22c55e', fontWeight:600 }">
+          {{ t.type === 'error' ? '✕' : '✓' }}</span> {{ t.text }}
+      </div>
+    </div>
   </div>
 </template>
 
@@ -91,6 +100,8 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import Sidebar from '../components/Sidebar.vue'
 import TopBar from '../components/TopBar.vue'
+import DocStatus from '../components/DocStatus.vue'
+import { detectSettlements } from '../utils/ingest'
 import { useChatStore } from '../stores/chat'
 import { useKBStore } from '../stores/kb'
 import { getDocs, getDoc, deleteDoc, searchDocs, ragSearch, sendFeedback } from '../api'
@@ -149,6 +160,16 @@ async function sendMsg() {
   nextTick(() => msgEnd.value?.scrollIntoView({ behavior: 'smooth' }))
 }
 
+// 入库落定通知：{ id, text, type: 'success' | 'error' }
+const toasts = ref([])
+function notify(text, type) {
+  const id = Date.now() + Math.random()
+  toasts.value.push({ id, text, type })
+  setTimeout(() => { toasts.value = toasts.value.filter(t => t.id !== id) }, 4000)
+}
+// 各文档上一轮状态，用于检测 PROCESSING → ACTIVE/FAILED 落定并通知
+const prevDocStatus = new Map()
+
 async function loadDocs() {
   const sbs = [...kb.selectedKbs]
   if (!sbs.length) { docs.value = []; scheduleDocPoll(); return }
@@ -159,6 +180,12 @@ async function loadDocs() {
       if (data.code === 200) docs.value.push(...data.data)
     } catch (e) { }
   }
+  // 只在「解析中 → 落定」的跳变上通知，首次加载不打扰
+  for (const n of detectSettlements(prevDocStatus, docs.value)) {
+    notify(n.text, n.type)
+  }
+  prevDocStatus.clear()
+  for (const d of docs.value) prevDocStatus.set(d.id, d.docStatus)
   scheduleDocPoll()
 }
 

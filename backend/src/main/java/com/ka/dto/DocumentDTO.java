@@ -19,5 +19,7 @@ public class DocumentDTO {
     private String fileType;
     private String docStatus;
     private Integer chunkCount;
+    private Integer ingestProgress;
+    private String ingestMessage;
     private LocalDateTime createdAt;
 }

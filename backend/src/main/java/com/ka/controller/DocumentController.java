@@ -301,6 +301,8 @@ public class DocumentController {
                 .fileType(doc.getFileType())
                 .docStatus(doc.getDocStatus())
                 .chunkCount(doc.getChunkCount())
+                .ingestProgress(doc.getIngestProgress())
+                .ingestMessage(doc.getIngestMessage())
                 .createdAt(doc.getCreatedAt())
                 .build();
     }

@@ -61,15 +61,15 @@ if not exist "%FRONTEND_DIR%\node_modules" (
 start "KA Frontend" cmd /c "cd /d %FRONTEND_DIR% && npx vite --host"
 echo   等待 Vite 就绪...
 :wait_vite
-%CURL% -s -o nul http://localhost:5173 >nul 2>&1
+%CURL% -s -o nul http://localhost:9888 >nul 2>&1
 if %ERRORLEVEL% NEQ 0 ( timeout /t 1 /nobreak >nul && goto wait_vite )
 
 echo.
 echo ========================================
 echo   启动完成！
-echo   前端: http://localhost:5173
+echo   前端: http://localhost:9888
 echo   Agent: http://localhost:8000/api/v1/rag/health
 echo   Backend: http://localhost:8080/api/health
 echo ========================================
-start http://localhost:5173
+start http://localhost:9888
 pause

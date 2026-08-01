@@ -27,7 +27,7 @@ public class IngestStatusPoller {
     private final DocumentRepository documentRepository;
     private final AgentClient agentClient;
 
-    @Scheduled(fixedDelay = 15000, initialDelay = 15000)
+    @Scheduled(fixedDelay = 5000, initialDelay = 5000)
     public void poll() {
         List<Document> processing = documentRepository.findByDocStatus("PROCESSING");
         for (Document doc : processing) {
@@ -45,15 +45,33 @@ public class IngestStatusPoller {
             case "done" -> {
                 doc.setDocStatus("ACTIVE");
                 doc.setChunkCount(s.getInserted() != null ? s.getInserted() : 0);
+                doc.setIngestProgress(100);
+                doc.setIngestMessage(null);
                 documentRepository.save(doc);
                 log.info("文档入库完成: docId={}, chunkCount={}", doc.getId(), doc.getChunkCount());
             }
             case "failed", "interrupted" -> {
                 doc.setDocStatus("FAILED");
+                doc.setIngestMessage(s.getMessage());
                 documentRepository.save(doc);
                 log.error("文档入库失败: docId={}, message={}", doc.getId(), s.getMessage());
             }
-            case "processing" -> { /* 仍在处理，下轮再看 */ }
+            case "processing" -> {
+                // 回写入库进度与阶段提示，前端据此渲染进度条；进度封顶 99，100 只由 done 落定。
+                // 优先用 agent 按阶段加权算的 percent（解析/QA/入库全覆盖）；
+                // 旧版 agent 未上报时退回 done/total 估算
+                int percent = s.getPercent() != null ? s.getPercent() : 0;
+                int total = s.getTotal() != null ? s.getTotal() : 0;
+                int done = s.getDone() != null ? s.getDone() : 0;
+                int progress = percent > 0 ? Math.min(99, percent)
+                        : (total > 0 ? Math.min(99, done * 100 / total) : 0);
+                if (!Integer.valueOf(progress).equals(doc.getIngestProgress())
+                        || !java.util.Objects.equals(s.getMessage(), doc.getIngestMessage())) {
+                    doc.setIngestProgress(progress);
+                    doc.setIngestMessage(s.getMessage());
+                    documentRepository.save(doc);
+                }
+            }
             default -> {
                 // unknown：agent 重启丢状态或查询异常，不立刻判死；
                 // updated_at 超过 10 分钟仍 unknown 才标记 FAILED

@@ -122,13 +122,20 @@ class PdfUpload(BaseModel):
     device: str | None = None  # cpu / cuda，缺省用服务端配置 ocr_device
 
 
+def _set_progress(doc_id: int, percent: int, message: str, total: int = 0, done: int = 0):
+    """写入带整体百分比的任务状态（percent 0-99 由阶段加权计算，100 只由完成时落定）"""
+    _set_task(doc_id, {"status": "processing", "total": total, "done": done,
+                       "percent": max(0, min(99, percent)), "message": message})
+
+
 # ═════════════════════════════════
 # 核心入库
 # ═════════════════════════════════
 
-def _do_ingest(req: IngestRequest):
+def _do_ingest(req: IngestRequest, qa_lo: int = 0, qa_hi: int = 85):
+    """结构化/QA（qa_lo~qa_hi%）→ 向量化入库（~100%）。PDF 路径 QA 从 30% 起（前 30% 是解析）"""
     doc_id = req.doc_id
-    _set_task(doc_id, {"status": "processing", "total": 0, "done": 0, "message": "结构化处理中..."})
+    _set_progress(doc_id, qa_lo, "结构化处理中...")
     try:
         if not milvus_client.is_connected:
             _set_task(doc_id, {"status": "failed", "message": "Milvus not connected"}); return
@@ -137,12 +144,16 @@ def _do_ingest(req: IngestRequest):
             delete_by_expr(f"doc_id == {doc_id}")
         except Exception as e:
             logger.warning(f"清理旧向量失败 doc={doc_id}（继续入库）: {e}")
-        qa_pairs = doc_processor.process(req.content, req.title)
+        qa_pairs = doc_processor.process(
+            req.content, req.title,
+            progress_cb=lambda d, t: _set_progress(
+                doc_id, int(qa_lo + (qa_hi - qa_lo) * d / max(t, 1)),
+                f"结构化/QA 生成中（{d}/{t}）...", t, d))
         if not qa_pairs:
             _set_task(doc_id, {"status": "failed", "message": "未能从文档中提取到有效文本内容"}); return
 
         total = len(qa_pairs); inserted = 0
-        _set_task(doc_id, {"status": "processing", "total": total, "done": 0, "message": "向量化 + 入库..."})
+        _set_progress(doc_id, qa_hi, "向量化 + 入库...", total, 0)
         for i in range(0, total, 10):
             batch = qa_pairs[i:i+10]
             texts = [f"{q['title']}\n{q['content']}" for q in batch]
@@ -154,10 +165,13 @@ def _do_ingest(req: IngestRequest):
                      "embedding": e.tolist()}
                     for q, e in zip(batch, embs)]
             inserted += milvus_client.insert(rows)
-            _set_task(doc_id, {"status": "processing", "total": total, "done": min(i+10, total)})
+            done = min(i+10, total)
+            _set_progress(doc_id, int(qa_hi + (100 - qa_hi) * done / total),
+                          f"向量化 + 入库（{done}/{total}）...", total, done)
 
         milvus_client.create_index_if_needed()
-        _set_task(doc_id, {"status": "done", "total": total, "done": total, "inserted": inserted})
+        _set_task(doc_id, {"status": "done", "total": total, "done": total,
+                           "percent": 100, "inserted": inserted})
         logger.info(f"Ingest done: doc={doc_id}, {inserted} QA pairs")
     except Exception as e:
         logger.error(f"ingest failed: {e}", exc_info=True)
@@ -168,9 +182,10 @@ def _do_ingest(req: IngestRequest):
 # PDF → Markdown 转换
 # ═════════════════════════════════
 
-def _pdf_to_markdown(pdf_bytes: bytes) -> str:
-    """PDF → Markdown：字号检测标题 + 表格 + 页面标记"""
+def _pdf_to_markdown(pdf_bytes: bytes, progress_cb=None) -> str:
+    """PDF → Markdown：字号检测标题 + 表格 + 页面标记；progress_cb(done_pages, total_pages) 逐页回报"""
     doc = __import__("pymupdf").open(stream=pdf_bytes, filetype="pdf")
+    total_pages = doc.page_count
     parts = []
     for pi, page in enumerate(doc):
         blocks = page.get_text("dict").get("blocks", [])
@@ -211,6 +226,11 @@ def _pdf_to_markdown(pdf_bytes: bytes) -> str:
 
         if page_lines:
             parts.append(f"## 第{pi+1}页\n" + "\n".join(page_lines))
+        if progress_cb:
+            try:
+                progress_cb(pi + 1, total_pages)
+            except Exception:
+                pass  # 进度回报失败不影响解析
     doc.close()
     return "\n\n".join(parts)
 
@@ -244,15 +264,22 @@ async def ingest_status(doc_id: int):
 
 
 def _do_ingest_pdf(req: PdfUpload):
-    """后台线程：PDF 解析/OCR（重 CPU，避免阻塞事件循环）→ 入库"""
+    """后台线程：PDF 解析/OCR（重 CPU，避免阻塞事件循环）→ 入库；解析 0~30%，QA 30~85%，入库 ~100%"""
     doc_id = req.doc_id
-    _set_task(doc_id, {"status": "processing", "total": 0, "done": 0, "message": "PDF 解析中..."})
+    _set_progress(doc_id, 0, "PDF 解析中...")
     try:
         pdf_bytes = base64.b64decode(req.pdf_base64)
-        text = _pdf_to_markdown(pdf_bytes)
+        text = _pdf_to_markdown(
+            pdf_bytes,
+            progress_cb=lambda d, t: _set_progress(
+                doc_id, int(30 * d / max(t, 1)), f"PDF 解析中（{d}/{t} 页）...", t, d))
         if not text.strip():
             logger.info(f"PDF 无文字，启用 OCR({ _resolve_device(req.device) }): {req.title}")
-            text = _ocr_pdf(pdf_bytes, req.device)
+            _set_progress(doc_id, 5, "扫描件 OCR 识别中（Docling）...")
+            text = _ocr_pdf(
+                pdf_bytes, req.device,
+                progress_cb=lambda d, t: _set_progress(
+                    doc_id, int(30 * d / max(t, 1)), f"OCR 识别中（{d}/{t} 页）...", t, d))
     except Exception as e:
         _set_task(doc_id, {"status": "failed", "message": f"PDF error: {e}"})
         return
@@ -260,7 +287,7 @@ def _do_ingest_pdf(req: PdfUpload):
         _set_task(doc_id, {"status": "failed", "message": "PDF/图片未识别到文字"})
         return
     ir = IngestRequest(doc_id=doc_id, title=req.title, kb_name=req.kb_name, content=text)
-    _do_ingest(ir)
+    _do_ingest(ir, qa_lo=30)
 
 
 @router.post("/ingest-pdf")
@@ -275,7 +302,7 @@ async def ingest_pdf(req: PdfUpload):
 def _do_ingest_image(req: PdfUpload):
     """后台线程：图片 OCR（重 CPU/GPU）→ 入库"""
     doc_id = req.doc_id
-    _set_task(doc_id, {"status": "processing", "total": 0, "done": 0, "message": "图片 OCR 中..."})
+    _set_progress(doc_id, 5, "图片 OCR 中...")
     try:
         img_bytes = base64.b64decode(req.pdf_base64)
         text = _ocr_image(img_bytes, req.device)
@@ -286,7 +313,7 @@ def _do_ingest_image(req: PdfUpload):
         _set_task(doc_id, {"status": "failed", "message": "图片未识别到文字"})
         return
     ir = IngestRequest(doc_id=doc_id, title=req.title, kb_name=req.kb_name, content=text)
-    _do_ingest(ir)
+    _do_ingest(ir, qa_lo=30)
 
 
 @router.post("/ingest-image")
@@ -338,9 +365,9 @@ def _get_docling(device: str | None = None):
         logger.info(f"Docling 转换器加载完成（RapidOCR, {device}）")
     return _docling_converters[device]
 
-def _ocr_pdf(pdf_bytes: bytes, device: str | None = None) -> str:
+def _ocr_pdf(pdf_bytes: bytes, device: str | None = None, progress_cb=None) -> str:
     """扫描件 OCR：Docling 版面分析 + RapidOCR，直接产出带标题/表格结构的 Markdown；
-    Docling 异常时降级 easyocr 纯文本"""
+    Docling 异常时降级 easyocr 纯文本；progress_cb(done_pages, total_pages) 仅在 easyocr 路径逐页回报"""
     import tempfile
     try:
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -356,10 +383,11 @@ def _ocr_pdf(pdf_bytes: bytes, device: str | None = None) -> str:
             os.unlink(tmp_path)
     except Exception as e:
         logger.warning(f"Docling 识别失败，降级 easyocr: {e}")
-    return _ocr_pdf_easyocr(pdf_bytes, device)
+    return _ocr_pdf_easyocr(pdf_bytes, device, progress_cb)
 
-def _ocr_pdf_easyocr(pdf_bytes: bytes, device: str | None = None) -> str:
+def _ocr_pdf_easyocr(pdf_bytes: bytes, device: str | None = None, progress_cb=None) -> str:
     doc = __import__("pymupdf").open(stream=pdf_bytes, filetype="pdf")
+    total_pages = doc.page_count
     reader = _get_ocr(device)
     lines = []
     for i, page in enumerate(doc):
@@ -369,6 +397,11 @@ def _ocr_pdf_easyocr(pdf_bytes: bytes, device: str | None = None) -> str:
         if results:
             lines.append(f"## 第{i+1}页")
             lines.extend(results)
+        if progress_cb:
+            try:
+                progress_cb(i + 1, total_pages)
+            except Exception:
+                pass  # 进度回报失败不影响 OCR
     doc.close()
     return "\n".join(lines)
 

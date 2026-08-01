@@ -131,8 +131,8 @@ class DocumentProcessor:
             chunks.append(buf)
         return chunks
 
-    def process(self, text: str, title: str) -> List[Dict[str, Any]]:
-        """主流程：文本 → 结构化 → QA → Milvus 行"""
+    def process(self, text: str, title: str, progress_cb=None) -> List[Dict[str, Any]]:
+        """主流程：文本 → 结构化 → QA → Milvus 行；progress_cb(done, total) 逐段回报进度"""
         if not settings.deepseek_api_key:
             return self._fallback_process(text, title)
 
@@ -150,7 +150,10 @@ class DocumentProcessor:
                 prompt = s_prompt.format(title=title, chunk=chunk[:2000])
                 raw = self._call_llm(prompt, max_tokens=512)
                 info = self._parse_json(raw)
-                if not info:
+                # LLM 偶尔返回 JSON 数组而非对象，取首个 dict 兼容，避免整段被丢弃
+                if isinstance(info, list):
+                    info = next((x for x in info if isinstance(x, dict)), None)
+                if not isinstance(info, dict) or not info:
                     continue
 
                 # Step 3: 生成 QA 对
@@ -179,6 +182,12 @@ class DocumentProcessor:
             except Exception as e:
                 logger.warning(f"段{i+1}处理失败: {e}")
                 continue
+            finally:
+                if progress_cb:
+                    try:
+                        progress_cb(i + 1, len(sections))
+                    except Exception:
+                        pass  # 进度回报失败不影响入库主流程
 
         logger.info(f"文档[{title}]共生成 {len(all_qa)} 个 QA 对")
         return all_qa

@@ -45,6 +45,15 @@ public class Document {
     @Builder.Default
     private Integer chunkCount = 0;
 
+    /** 入库进度 0-100（PROCESSING 期间由轮询器回写，完成置 100） */
+    @Column(name = "ingest_progress")
+    @Builder.Default
+    private Integer ingestProgress = 0;
+
+    /** 入库阶段/失败原因提示（失败时展示给用户） */
+    @Column(name = "ingest_message", length = 512)
+    private String ingestMessage;
+
     /** 原始文件大小（字节） */
     @Column(name = "file_size")
     private Long fileSize;

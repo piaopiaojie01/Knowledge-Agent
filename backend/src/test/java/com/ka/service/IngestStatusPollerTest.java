@@ -19,8 +19,8 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * 入库状态轮询器回归测试：done → ACTIVE + chunkCount；
- * failed/interrupted → FAILED；processing → 不动；
+ * 入库状态轮询器回归测试：done → ACTIVE + chunkCount + progress=100；
+ * failed/interrupted → FAILED + 失败原因；processing → 回写进度/阶段提示（无变化不落库）；
  * unknown 超过 10 分钟才判 FAILED。
  */
 @ExtendWith(MockitoExtension.class)
@@ -47,25 +47,27 @@ class IngestStatusPollerTest {
         Document doc = processingDoc(1L);
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
         when(agentClient.ingestStatus(1L))
-                .thenReturn(new AgentClient.IngestStatusResponse("done", "", 42));
+                .thenReturn(new AgentClient.IngestStatusResponse("done", "", 42, 0, 0, 0));
 
         poller.poll();
 
         assertEquals("ACTIVE", doc.getDocStatus());
         assertEquals(42, doc.getChunkCount());
+        assertEquals(100, doc.getIngestProgress());
         verify(documentRepository).save(doc);
     }
 
     @Test
-    void agent返回failed时落定FAILED() {
+    void agent返回failed时落定FAILED并写入失败原因() {
         Document doc = processingDoc(1L);
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
         when(agentClient.ingestStatus(1L))
-                .thenReturn(new AgentClient.IngestStatusResponse("failed", "未能从文档中提取到有效文本内容", 0));
+                .thenReturn(new AgentClient.IngestStatusResponse("failed", "未能从文档中提取到有效文本内容", 0, 0, 0, 0));
 
         poller.poll();
 
         assertEquals("FAILED", doc.getDocStatus());
+        assertEquals("未能从文档中提取到有效文本内容", doc.getIngestMessage());
         verify(documentRepository).save(doc);
     }
 
@@ -74,7 +76,7 @@ class IngestStatusPollerTest {
         Document doc = processingDoc(1L);
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
         when(agentClient.ingestStatus(1L))
-                .thenReturn(new AgentClient.IngestStatusResponse("interrupted", "agent 重启", 0));
+                .thenReturn(new AgentClient.IngestStatusResponse("interrupted", "agent 重启", 0, 0, 0, 0));
 
         poller.poll();
 
@@ -83,11 +85,41 @@ class IngestStatusPollerTest {
     }
 
     @Test
-    void agent返回processing时状态不变也不落库() {
+    void agent返回processing时优先用agent上报的percent() {
         Document doc = processingDoc(1L);
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
         when(agentClient.ingestStatus(1L))
-                .thenReturn(new AgentClient.IngestStatusResponse("processing", "向量化中", 0));
+                .thenReturn(new AgentClient.IngestStatusResponse("processing", "结构化/QA 生成中（3/10）...", 0, 10, 3, 45));
+
+        poller.poll();
+
+        assertEquals("PROCESSING", doc.getDocStatus());
+        assertEquals(45, doc.getIngestProgress());
+        assertEquals("结构化/QA 生成中（3/10）...", doc.getIngestMessage());
+        verify(documentRepository).save(doc);
+    }
+
+    @Test
+    void 旧版agent无percent时退回done除total估算() {
+        Document doc = processingDoc(1L);
+        when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
+        when(agentClient.ingestStatus(1L))
+                .thenReturn(new AgentClient.IngestStatusResponse("processing", "向量化中", 0, 10, 3, 0));
+
+        poller.poll();
+
+        assertEquals(30, doc.getIngestProgress());
+        verify(documentRepository).save(doc);
+    }
+
+    @Test
+    void processing进度无变化时不重复落库() {
+        Document doc = processingDoc(1L);
+        doc.setIngestProgress(0);
+        doc.setIngestMessage("排队中...");
+        when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
+        when(agentClient.ingestStatus(1L))
+                .thenReturn(new AgentClient.IngestStatusResponse("processing", "排队中...", 0, 0, 0, 0));
 
         poller.poll();
 
@@ -100,7 +132,7 @@ class IngestStatusPollerTest {
         Document doc = processingDoc(1L); // updatedAt = now
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
         when(agentClient.ingestStatus(1L))
-                .thenReturn(new AgentClient.IngestStatusResponse("unknown", "", 0));
+                .thenReturn(new AgentClient.IngestStatusResponse("unknown", "", 0, 0, 0, 0));
 
         poller.poll();
 
@@ -114,7 +146,7 @@ class IngestStatusPollerTest {
         doc.setUpdatedAt(LocalDateTime.now().minusMinutes(11));
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(doc));
         when(agentClient.ingestStatus(1L))
-                .thenReturn(new AgentClient.IngestStatusResponse("unknown", "", 0));
+                .thenReturn(new AgentClient.IngestStatusResponse("unknown", "", 0, 0, 0, 0));
 
         poller.poll();
 
@@ -138,7 +170,7 @@ class IngestStatusPollerTest {
         when(documentRepository.findByDocStatus("PROCESSING")).thenReturn(List.of(bad, good));
         when(agentClient.ingestStatus(1L)).thenThrow(new RuntimeException("boom"));
         when(agentClient.ingestStatus(2L))
-                .thenReturn(new AgentClient.IngestStatusResponse("done", "", 3));
+                .thenReturn(new AgentClient.IngestStatusResponse("done", "", 3, 0, 0, 0));
 
         poller.poll();
 

@@ -59,15 +59,21 @@
         </select>
       </div>
       <button class="upload-submit-btn" @click="doUpload" :disabled="!file">⬆ 上传并入库</button>
+      <!-- 刚上传文档的入库进度（每 3 秒轮询，落定后 6 秒自动消失） -->
+      <div v-for="u in uploads" :key="u.id" style="margin-top:8px;padding:8px;background:#0b1120;border:1px solid #1e293b;border-radius:8px">
+        <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="u.title">{{ u.title }}</div>
+        <DocStatus :doc="u" />
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, watch } from 'vue'
+import { ref, watch, onUnmounted } from 'vue'
 import { useKBStore } from '../stores/kb'
 import { useChatStore } from '../stores/chat'
-import { uploadDoc } from '../api'
+import { uploadDoc, getDoc } from '../api'
+import DocStatus from './DocStatus.vue'
 const kb = useKBStore()
 const chat = useChatStore()
 const file = ref(null)
@@ -76,6 +82,42 @@ const isDragging = ref(false)
 // 解析设备选择，持久化到 localStorage
 const parseDevice = ref(localStorage.getItem('parseDevice') || 'cpu')
 watch(parseDevice, v => localStorage.setItem('parseDevice', v))
+
+// 刚上传的文档进度：{ id, title, docStatus, ingestProgress, ingestMessage, settledAt }
+const uploads = ref([])
+let uploadPollTimer = null
+
+function scheduleUploadPoll() {
+  clearTimeout(uploadPollTimer); uploadPollTimer = null
+  if (uploads.value.some(u => u.docStatus === 'PROCESSING')) {
+    uploadPollTimer = setTimeout(refreshUploads, 3000)
+  }
+}
+
+async function refreshUploads() {
+  for (const u of uploads.value) {
+    if (u.docStatus !== 'PROCESSING') continue
+    try {
+      const { data } = await getDoc(u.id)
+      if (data.code === 200 && data.data) {
+        const wasProcessing = u.docStatus === 'PROCESSING'
+        Object.assign(u, {
+          docStatus: data.data.docStatus,
+          ingestProgress: data.data.ingestProgress,
+          ingestMessage: data.data.ingestMessage
+        })
+        // 落定后 6 秒从上传区移除（成功/失败状态留给用户看一眼）
+        if (wasProcessing && u.docStatus !== 'PROCESSING') {
+          const id = u.id
+          setTimeout(() => { uploads.value = uploads.value.filter(x => x.id !== id) }, 6000)
+        }
+      }
+    } catch (e) { }
+  }
+  scheduleUploadPoll()
+}
+
+onUnmounted(() => clearTimeout(uploadPollTimer))
 
 function createKb() {
   const name = prompt('知识库名称:')
@@ -124,7 +166,17 @@ async function doUpload() {
       fd.append('kbId', kbId)
       fd.append('device', parseDevice.value)
       const { data } = await uploadDoc(fd)
-      if (data.code === 200) okNames.push(name)
+      if (data.code === 200) {
+        okNames.push(name)
+        // 上传区直接展示该文档的入库进度（同一文件传多个 KB 时各一条）
+        if (data.data?.id) {
+          uploads.value.push({
+            id: data.data.id, title: file.value.name,
+            docStatus: 'PROCESSING', ingestProgress: 0, ingestMessage: '排队中...'
+          })
+          scheduleUploadPoll()
+        }
+      }
       else failNames.push(name)
     } catch (e) { failNames.push(name) }
   }
