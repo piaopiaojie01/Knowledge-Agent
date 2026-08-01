@@ -1,3 +1,37 @@
+# ── 敏感信息（禁止提交）──
+.env
+*.env
+!.env.example
+
+# ── Python ──
+__pycache__/
+*.pyc
+.venv/
+agent/data/
+agent/charts/
+agent/icons/
+
+# ── Java ──
+backend/target/
+backend/charts/
+backend/icons/
+*.log
+
+# ── Node ──
+frontend/node_modules/
+frontend/dist/
+
+# ── IDE / OS ──
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+
+# ── 数据库/运行时数据 ──
+*.sqlite
+*.sqlite3
+backups/
 # Python
 __pycache__/
 *.py[cod]

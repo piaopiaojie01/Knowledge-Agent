@@ -3,6 +3,7 @@ chcp 65001 >nul
 cd /d "%~dp0"
 set "AGENT_DIR=%~dp0agent"
 set "BACKEND_DIR=%~dp0backend"
+set "FRONTEND_DIR=%~dp0frontend"
 set "VENV_PYTHON=%AGENT_DIR%\.venv\Scripts\python.exe"
 set "CURL=%SystemRoot%\System32\curl.exe"
 
@@ -28,34 +29,47 @@ echo   MySQL / Redis / Milvus 已就绪
 :: ── 2. Agent ───────────────────────────
 echo.
 echo [2/4] 启动 Agent (GPU) ...
-start "Knowledge Agent" cmd /c "cd /d %AGENT_DIR% && set KA_EMBEDDING_DEVICE=cuda && %VENV_PYTHON% main.py"
+start "KA Agent" cmd /c "cd /d %AGENT_DIR% && set KA_EMBEDDING_DEVICE=cuda && %VENV_PYTHON% main.py"
 echo   等待 Agent 就绪...
 :wait_agent
 %CURL% -s http://localhost:8000/api/v1/rag/health >nul 2>&1
 if %ERRORLEVEL% NEQ 0 ( timeout /t 1 /nobreak >nul && goto wait_agent )
 echo   Agent 已就绪
 
-:: ── 3. 入库 ────────────────────────────
+:: ── 3. Spring Boot ─────────────────────
 echo.
-echo [3/4] 文档入库 ...
-cd /d "%AGENT_DIR%"
-set HF_HUB_OFFLINE=1
-%VENV_PYTHON% scripts\quick_ingest.py
-echo   入库完成
-
-:: ── 4. Spring Boot ─────────────────────
-echo.
-echo [4/4] 启动 Spring Boot ...
-start "Spring Boot" cmd /c "cd /d %BACKEND_DIR% && mvn spring-boot:run"
+echo [3/4] 启动 Spring Boot ...
+if exist "%BACKEND_DIR%\target\knowledge-agent-backend-1.0.0.jar" (
+    start "KA Backend" cmd /c "cd /d %BACKEND_DIR% && java -jar target\knowledge-agent-backend-1.0.0.jar --spring.profiles.active=dev"
+) else (
+    echo   未找到 jar，使用 mvn spring-boot:run（首次较慢）...
+    start "KA Backend" cmd /c "cd /d %BACKEND_DIR% && mvn spring-boot:run"
+)
 echo   等待 Spring Boot 就绪...
 :wait_boot
-%CURL% -s -o nul -w "%%{http_code}" http://localhost:8080/ | findstr "200" >nul 2>&1
+%CURL% -s http://localhost:8080/api/health >nul 2>&1
 if %ERRORLEVEL% NEQ 0 ( timeout /t 2 /nobreak >nul && goto wait_boot )
+echo   Backend 已就绪
+
+:: ── 4. Vue 前端 ────────────────────────
+echo.
+echo [4/4] 启动 Vue 前端 (Vite) ...
+if not exist "%FRONTEND_DIR%\node_modules" (
+    echo   首次运行，安装前端依赖（npm install）...
+    cd /d "%FRONTEND_DIR%" && call npm install
+)
+start "KA Frontend" cmd /c "cd /d %FRONTEND_DIR% && npx vite --host"
+echo   等待 Vite 就绪...
+:wait_vite
+%CURL% -s -o nul http://localhost:5173 >nul 2>&1
+if %ERRORLEVEL% NEQ 0 ( timeout /t 1 /nobreak >nul && goto wait_vite )
 
 echo.
 echo ========================================
 echo   启动完成！
-echo   前端: http://localhost:8080
+echo   前端: http://localhost:5173
+echo   Agent: http://localhost:8000/api/v1/rag/health
+echo   Backend: http://localhost:8080/api/health
 echo ========================================
-start http://localhost:8080
+start http://localhost:5173
 pause
