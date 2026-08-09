@@ -68,6 +68,8 @@ ka:
     - /favicon.ico
   jwt-blacklist-enabled: true
   max-upload-mb: 100
+  chart-dir: ${KA_CHART_DIR:charts}
+  icon-dir: ${KA_ICON_DIR:icons}
   login-max-failures: 5
   login-lock-minutes: 30
   audit-retention-days: 365

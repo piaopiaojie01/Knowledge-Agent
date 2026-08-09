@@ -51,10 +51,23 @@ start.bat
 # 选择 [6] 一键全启动
 ```
 
+### Docker Compose 全量部署（推荐）
+
+```bash
+# 构建并启动全部服务（backend / agent / frontend 三端镜像，nginx 托管前端并反代）
+# 首次构建 agent 镜像较慢（torch / docling 体积大，约 5-10GB）
+docker compose up -d --build
+
+# 生产环境需先准备密钥（见 deploy/ka.env.example），然后：
+KA_INTERNAL_API_KEY=xxx JWT_SECRET=yyy DB_PASS=zzz docker compose --env-file /etc/ka.env up -d --build
+```
+
+运行时产物（图表/图标/Agent 记忆与任务库）存放在命名卷 `ka_charts` / `ka_icons` / `ka_agent_data` 中，重建容器不丢失。
+
 ### 手动启动
 
 ```bash
-# 1. 启动中间件
+# 1. 启动中间件（仅 MySQL/Redis/Milvus 等）
 docker-compose up -d
 
 # 2. 等待 MySQL 就绪 (约 15 秒)，然后:
@@ -173,6 +186,9 @@ curl -X POST http://localhost:8000/api/v1/rag/query \
 ```
 g:\Knowledge Agent/
 ├── docker-compose.yml              # MySQL + Redis + Milvus(etcd+minio) 编排
+├── backend/Dockerfile              # Spring Boot 多阶段构建镜像
+├── agent/Dockerfile                # Python Agent 镜像
+├── frontend/Dockerfile             # Vue 构建 + nginx 托管镜像
 ├── start.bat                       # Windows 一键启动脚本
 ├── sql/
 │   └── init.sql                    # 数据库初始化 DDL + 种子数据
@@ -277,6 +293,7 @@ g:\Knowledge Agent/
 | jwt.expiration | 86400000 | Token 有效期 (24h) |
 | agent.base-url | http://localhost:8000 | Python Agent 地址 |
 | agent.api-key | (env: AGENT_API_KEY) | 调用 Agent 的内部密钥 |
+| ka.chart-dir / ka.icon-dir | charts / icons | 图表/图标静态目录（容器部署指向挂载卷） |
 
 ## 安全加固（P0）
 

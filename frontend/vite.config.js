@@ -6,9 +6,10 @@ export default defineConfig({
   server: {
     port: 9888,
     proxy: {
-      '/api': 'http://localhost:9898',
-      '/charts': 'http://localhost:9898',
-      '/icons': 'http://localhost:9898'
+      // 后端默认 8080（application-dev.yml server.port）
+      '/api': 'http://localhost:8080',
+      '/charts': 'http://localhost:8080',
+      '/icons': 'http://localhost:8080'
     }
   },
   build: {
