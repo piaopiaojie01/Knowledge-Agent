@@ -3,13 +3,20 @@
 所有工具均通过 OpenAI function calling 协议注册，LLM 自动选择调用。
 收费情况：除 DeepSeek 调用费用外，所有工具 API 均免费。
 """
+import ast
+import ipaddress
 import requests
 import math
 import re
 import secrets
+import socket
 import string
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Dict, Any
+from urllib.parse import urljoin, urlparse
+
+from config import settings
 
 # ── 工具定义 ──
 TOOLS = [
@@ -255,13 +262,57 @@ TOOLS = [
       }
     }
   }
-]# ── 安全计算内置函数（防止 eval 执行恶意代码）──
-#   白名单模式：只暴露 math 模块中的常用数学函数
-_safe_builtins = {
-    "abs": abs, "round": round, "min": min, "max": max,
-    "pow": pow, "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos,
-    "log": math.log, "log10": math.log10, "pi": math.pi, "e": math.e
+]# ── 安全计算（AST 白名单求值，替代 eval，杜绝任意代码执行）──
+_MATH_BINOPS = {
+    ast.Add: lambda a, b: a + b,
+    ast.Sub: lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.Div: lambda a, b: a / b,
+    ast.FloorDiv: lambda a, b: a // b,
+    ast.Mod: lambda a, b: a % b,
+    ast.Pow: lambda a, b: a ** b,
 }
+_MATH_UNARY = {ast.UAdd: lambda a: +a, ast.USub: lambda a: -a}
+_MATH_CONSTANTS = {"pi": math.pi, "e": math.e}
+_MATH_FUNCS = {
+    "abs": abs, "round": round, "min": min, "max": max, "pow": pow,
+    "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos, "tan": math.tan,
+    "log": math.log, "log10": math.log10, "log2": math.log2,
+}
+
+
+def safe_calculate(expression: str):
+    """只允许数字、四则/幂运算、括号与白名单数学函数/常量的表达式求值"""
+    expr = (expression or "").strip()
+    if not expr:
+        raise ValueError("表达式为空")
+    if len(expr) > 200:
+        raise ValueError("表达式过长")
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"表达式语法错误: {e}") from e
+
+    def eval_node(node):
+        if isinstance(node, ast.Expression):
+            return eval_node(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.BinOp) and type(node.op) in _MATH_BINOPS:
+            return _MATH_BINOPS[type(node.op)](
+                eval_node(node.left), eval_node(node.right))
+        if isinstance(node, ast.UnaryOp) and type(node.op) in _MATH_UNARY:
+            return _MATH_UNARY[type(node.op)](eval_node(node.operand))
+        if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id in _MATH_FUNCS):
+            if len(node.args) > 2:
+                raise ValueError("函数参数过多")
+            return _MATH_FUNCS[node.func.id](*[eval_node(a) for a in node.args])
+        if isinstance(node, ast.Name) and node.id in _MATH_CONSTANTS:
+            return _MATH_CONSTANTS[node.id]
+        raise ValueError(f"不支持的表达式元素: {type(node).__name__}")
+
+    return eval_node(tree.body)
 
 # ── RSS 源（BBC 在国内被封，改用 DuckDuckGo 新闻搜索兜底）──
 _RSS_FEEDS = {
@@ -286,7 +337,7 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
     if name == "calculate":
         expr = args.get("expression", "")
         try:
-            result = eval(expr, {"__builtins__": {}}, _safe_builtins)
+            result = safe_calculate(expr)
             return f"计算结果: {expr} = {result}"
         except Exception as e:
             return f"计算失败: {e}"
@@ -330,18 +381,58 @@ def execute_tool(name: str, args: Dict[str, Any]) -> str:
 
 
 
-# --- 网页抓取 ---
+# --- 网页抓取（P0：域名白名单 + SSRF 防护）---
+def _url_fetch_allowed(url: str) -> tuple:
+    """校验抓取目标：协议、域名白名单、内网/保留地址拦截"""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https"):
+        return False, "仅支持 http/https 地址"
+    host = (parsed.hostname or "").lower()
+    if not host:
+        return False, "URL 缺少主机名"
+    allowlist = [d.strip().lower() for d in settings.url_fetch_allowlist if d.strip()]
+    if not allowlist:
+        return False, "url_fetch 工具未启用（未配置 KA_URL_FETCH_ALLOWLIST）"
+    if not any(host == d or host.endswith("." + d) for d in allowlist):
+        return False, f"域名不在抓取白名单内: {host}"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except socket.gaierror:
+        return False, f"域名无法解析: {host}"
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if not ip.is_global:
+            return False, f"禁止访问内网/保留地址: {ip}"
+    return True, ""
+
+
 def _fetch_url(url: str) -> str:
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=10, allow_redirects=True)
-        r.raise_for_status()
-        # 简单提取正文：去掉 script/style 标签和 HTML
-        html = r.text
-        html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r'<[^>]+>', ' ', html)
-        text = re.sub(r'\s+', ' ', text).strip()
-        return f"【{url}】\n{text[:2000]}"
+        current = url
+        # 手动跟随重定向（最多 3 跳），每一跳都重新校验白名单，防止跳转绕过 SSRF 防护
+        for _ in range(4):
+            ok, err = _url_fetch_allowed(current)
+            if not ok:
+                return f"抓取失败: {err}"
+            r = requests.get(
+                current, headers={"User-Agent": "Mozilla/5.0"},
+                timeout=10, allow_redirects=False)
+            r.raise_for_status()
+            location = r.headers.get("Location")
+            if r.is_redirect and location:
+                current = urljoin(current, location)
+                continue
+            # 简单提取正文：去掉 script/style 标签和 HTML
+            html = r.text
+            html = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            html = re.sub(r'<style[^>]*>.*?</style>', '', html, flags=re.DOTALL | re.IGNORECASE)
+            text = re.sub(r'<[^>]+>', ' ', html)
+            text = re.sub(r'\s+', ' ', text).strip()
+            return f"【{current}】\n{text[:2000]}"
+        return "抓取失败: 重定向次数过多"
     except Exception as e:
         return f"抓取失败: {e}"
 
@@ -511,7 +602,8 @@ def _make_icon_svg(desc: str, size: int = 128) -> str:
     # 写文件
     name = "".join(c for c in desc[:20] if c.isalnum() or c in " _-")
     name = name.strip() or "icon"
-    out_dir = r"g:\Knowledge Agent\backend\src\main\resources\static\icons"
+    out_dir = settings.icon_output_dir or str(
+        Path(__file__).resolve().parents[2] / "backend" / "icons")
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, f"{name}.svg")
     with open(path, "w", encoding="utf-8") as f:
@@ -565,12 +657,14 @@ def _make_chart(chart_type: str, labels: str, data: str, title: str = "", unit: 
         ax.grid(axis="y", alpha=0.3)
     plt.tight_layout()
     key = hashlib.md5((labels + data + title + chart_type).encode()).hexdigest()[:12]
-    # 保存到 backend/charts/（Spring Boot WebConfig 映射此目录）
+    # 保存到配置的 charts 目录（默认仓库根 backend/charts，Spring Boot WebConfig 映射）
     import os as _os
-    chart_dir = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))), "backend", "charts")
+    repo_root = Path(__file__).resolve().parents[2]
+    chart_dir = settings.chart_output_dir or str(repo_root / "backend" / "charts")
     _os.makedirs(chart_dir, exist_ok=True)
     path = _os.path.join(chart_dir, f"chart_{key}.png")
     fig.savefig(path, dpi=150, bbox_inches="tight")
     plt.close(fig)
-    url = f"http://localhost:8080/charts/chart_{key}.png"
+    base_url = (settings.chart_base_url or "http://localhost:8080").rstrip("/")
+    url = f"{base_url}/charts/chart_{key}.png"
     return '<img src="' + url + '" style="max-width:100%;border-radius:8px;margin:8px 0"/><br><small>📊 ' + (title or '图表') + ' · 基于 Matplotlib 渲染</small>'

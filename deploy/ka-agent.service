@@ -8,6 +8,7 @@ Type=simple
 User=ka
 Group=ka
 WorkingDirectory=/opt/knowledge-agent/agent
+EnvironmentFile=-/etc/ka.env
 Environment="KA_EMBEDDING_DEVICE=cuda"
 Environment="HF_HUB_OFFLINE=1"
 ExecStart=/opt/knowledge-agent/agent/.venv/bin/python main.py

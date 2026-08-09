@@ -18,3 +18,9 @@ jwt:
 
 agent:
   base-url: http://localhost:0
+  api-key: test-agent-key
+
+ka:
+  # 单元测试不连 Redis，关闭 JWT 黑名单链路
+  jwt-blacklist-enabled: false
+  max-upload-mb: 100

@@ -115,7 +115,8 @@ async def rag_query(req: RagQueryRequest):
 
     except Exception as e:
         logger.error(f"RAG 查询失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"RAG 查询失败: {str(e)}")
+        # P0：不向客户端透传内部异常细节，完整堆栈留在服务端日志
+        raise HTTPException(status_code=500, detail="RAG 查询失败，请稍后重试")
 
 
 @router.post("/query/stream")
@@ -140,7 +141,7 @@ async def rag_query_stream(req: RagQueryRequest):
         reranked_docs = await asyncio.to_thread(reranker.rerank, req.question, docs)
     except Exception as e:
         logger.error(f"流式查询检索失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"RAG 查询失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="RAG 查询失败，请稍后重试")
 
     best_retrieved = max((d.get("score", 0) for d in docs), default=0)
     sources = _build_sources(reranked_docs)
@@ -200,7 +201,7 @@ async def rag_search(req: RagSearchRequest):
 
     except Exception as e:
         logger.error(f"检索失败: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"检索失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="检索失败，请稍后重试")
 
 
 @router.post("/query/orchestrated", response_model=RagQueryResponse)
@@ -260,7 +261,7 @@ async def orchestrated_query(req: RagQueryRequest):
         )
     except Exception as e:
         logger.error(f"Orchestrated query failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+        raise HTTPException(status_code=500, detail="查询失败，请稍后重试")
 
 
 @router.get("/health", response_model=HealthResponse)

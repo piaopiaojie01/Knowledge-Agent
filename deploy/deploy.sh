@@ -8,6 +8,13 @@ KA_USER="ka"
 GREEN='\033[0;32m'
 NC='\033[0m'
 
+# 加载生产密钥（如存在 /etc/ka.env：DB_PASS / JWT_SECRET / KA_INTERNAL_API_KEY / KA_DEEPSEEK_API_KEY / REDIS_PASS）
+if [ -f /etc/ka.env ]; then
+    set -a
+    . /etc/ka.env
+    set +a
+fi
+
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}  Knowledge Agent Linux 部署${NC}"
 echo -e "${GREEN}========================================${NC}"

@@ -17,6 +17,7 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -38,6 +39,9 @@ public class DocumentController {
 
     /** 文档标题（文件名）最大长度，超长时截断并保留扩展名 */
     private static final int MAX_TITLE_LENGTH = 500;
+
+    @Value("${ka.max-upload-mb:100}")
+    private long maxUploadMb = 100;
 
     private final DocumentService documentService;
     private final DocumentRepository documentRepository;
@@ -76,6 +80,12 @@ public class DocumentController {
         }
         KnowledgeBase kb = kbRepository.findById(kbId)
                 .orElseThrow(() -> new RuntimeException("知识库不存在"));
+
+        // P0：大小上限（服务端强制，不信任客户端声明）
+        long maxBytes = maxUploadMb * 1024L * 1024L;
+        if (file.getSize() > maxBytes) {
+            return ApiResponse.error(413, "文件大小超过上限（" + maxUploadMb + "MB）");
+        }
 
         byte[] bytes = file.getBytes();
         if (bytes.length == 0) {

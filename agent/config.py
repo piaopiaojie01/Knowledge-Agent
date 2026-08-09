@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_model: str = "deepseek-v4-flash"
+    # 入库 QA 生成的 LLM 调用并发度（大文档提速；API 限流严重时调低）
+    ingest_llm_concurrency: int = 8
 
     retrieval_top_k: int = 5
     rerank_top_k: int = 3
@@ -63,6 +65,31 @@ class Settings(BaseSettings):
         "元", "件", "笔", "吨", "kg", "km", "m",
         "小时", "天", "月", "年",
     ]
+
+    # ═════════════════════════════════════════
+    # 安全配置（P0）
+    # ═════════════════════════════════════════
+
+    # 内部 API Key：Spring Boot 调用 Agent 时必须携带 X-KA-API-Key 请求头。
+    # 默认值仅供本地开发，生产环境必须通过 KA_INTERNAL_API_KEY 覆盖。
+    internal_api_key: str = "ka-internal-dev-key"
+
+    # CORS 白名单：Agent 只被后端服务调用（非浏览器），默认留空即可；
+    # 本地调试前端直连 Agent 时才需要显式配置。
+    cors_origins: list[str] = []
+
+    # url_fetch 工具域名白名单（空 = 禁用该工具；子域名自动匹配）。
+    url_fetch_allowlist: list[str] = []
+
+    # 上传体积上限（MB）：PDF/图片 base64 超过即拒绝
+    max_upload_mb: int = 100
+
+    # 运行时产物目录与访问地址（默认相对仓库根目录；容器部署请挂载卷并显式配置）
+    chart_output_dir: str = ""
+    icon_output_dir: str = ""
+    chart_base_url: str = "http://localhost:8080"
+
+    redis_password: str = ""
 
     model_config = {"env_prefix": "KA_", "env_file": ".env"}
 

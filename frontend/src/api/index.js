@@ -2,6 +2,31 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api' })
 
+const AUTH_KEYS = ['ka_token', 'ka_role', 'ka_username', 'ka_session']
+
+function clearAuthAndReload() {
+  AUTH_KEYS.forEach(k => localStorage.removeItem(k))
+  window.location.reload()
+}
+
+// 单飞：并发 401 只触发一次刷新，避免重复调用 /auth/refresh
+let refreshPromise = null
+
+async function refreshToken() {
+  const token = localStorage.getItem('ka_token')
+  if (!token) return null
+  try {
+    const { data } = await api.post('/auth/refresh', null, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (data?.code === 200 && data.data?.token) {
+      localStorage.setItem('ka_token', data.data.token)
+      return data.data.token
+    }
+  } catch (e) { /* 刷新失败走统一清理 */ }
+  return null
+}
+
 // 请求拦截：自动带 token
 api.interceptors.request.use(cfg => {
   const token = localStorage.getItem('ka_token')
@@ -9,20 +34,26 @@ api.interceptors.request.use(cfg => {
   return cfg
 })
 
-// 响应拦截：401 跳登录
-api.interceptors.response.use(r => r, err => {
-  if (err.response?.status === 401) {
-    localStorage.removeItem('ka_token')
-    localStorage.removeItem('ka_role')
-    localStorage.removeItem('ka_username')
-    localStorage.removeItem('ka_session')
-    window.location.reload()
+// 响应拦截：401 先尝试刷新重试一次，仍失败才清 token 跳登录
+api.interceptors.response.use(r => r, async err => {
+  const { response, config } = err
+  const isAuthEndpoint = config?.url && /auth\/(login|refresh)/.test(config.url)
+  if (response?.status === 401 && config && !config._retry && !isAuthEndpoint) {
+    config._retry = true
+    if (!refreshPromise) refreshPromise = refreshToken().finally(() => { refreshPromise = null })
+    const newToken = await refreshPromise
+    if (newToken) {
+      config.headers.Authorization = `Bearer ${newToken}`
+      return api(config)
+    }
   }
+  clearAuthAndReload()
   return Promise.reject(err)
 })
 
 // ── Auth ──
 export const authLogin = (u, p) => api.post('/auth/login', { username: u, password: p })
+export const authLogout = () => api.post('/auth/logout')
 
 // ── KB ──
 export const getKBList = () => api.get('/kb')
@@ -58,11 +89,8 @@ export async function ragQueryStream(question, kbNames, history, sessionId, { on
   if (!resp.ok || !resp.body) {
     // fetch 绕过 axios 拦截器，401 需自行清 token 并跳登录
     if (resp.status === 401) {
-      localStorage.removeItem('ka_token')
-      localStorage.removeItem('ka_role')
-      localStorage.removeItem('ka_username')
-      localStorage.removeItem('ka_session')
-      window.location.reload()
+      const ok = await refreshToken()
+      if (!ok) clearAuthAndReload()
     }
     throw new Error('stream http ' + resp.status)
   }
@@ -124,6 +152,11 @@ export const deleteUser = (id) => api.delete(`/admin/users/${id}`)
 export const getAdminStats = () => api.get('/admin/stats')
 export const getAuditLog = () => api.get('/admin/audit')
 export const batchUsers = (csv) => api.post('/admin/users/batch', { csv })
+export const listFeedback = () => api.get('/feedback')
+export const getNotifications = () => api.get('/notifications')
+export const grantPerm = (username, kbId, permissionType) =>
+  api.post('/permissions/grant', { username, kbId, permissionType })
+export const revokePerm = (username, kbId) => api.post('/permissions/revoke', { username, kbId })
 
 // ── Notifications ──
 export const getNotifCount = () => api.get('/notifications/unread-count')

@@ -87,6 +87,21 @@ class DocumentControllerTest {
     }
 
     @Test
+    void 超过大小上限返回413() throws IOException, NoSuchFieldException, IllegalAccessException {
+        // 把上限临时压到 1MB，验证服务端强制大小校验
+        java.lang.reflect.Field f = DocumentController.class.getDeclaredField("maxUploadMb");
+        f.setAccessible(true);
+        f.setLong(controller, 1L);
+        mockFile(new byte[2 * 1024 * 1024], "big.pdf");
+
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
+
+        assertEquals(413, resp.getCode());
+        assertTrue(resp.getMessage().contains("大小超过上限"));
+        verify(documentRepository, never()).save(any());
+    }
+
+    @Test
     void 非法device参数返回400() throws IOException {
         mockFile("hello".getBytes(StandardCharsets.UTF_8), "a.txt");
 

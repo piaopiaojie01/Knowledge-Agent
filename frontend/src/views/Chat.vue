@@ -25,70 +25,64 @@
       <!-- 文档预览模态 -->
       <div v-if="docView" class="admin-overlay" @click.self="docView = null">
         <div class="admin-box" style="width:720px;display:flex;flex-direction:column">
-          <h3><span>{{ docView.title }}</span><span @click="docView = null" style="cursor:pointer;font-size:20px">&times;</span></h3>
-          <div style="color:#64748b;font-size:12px;margin-bottom:12px">
+          <h3><span>{{ docView.title }}</span><span class="modal-close" @click="docView = null">&times;</span></h3>
+          <div class="modal-meta">
             {{ docView.fileType }} · {{ docView.chunkCount || 0 }} 分块 · {{ docView.createdAt?.substring(0,10) }}
           </div>
-          <div style="white-space:pre-wrap;overflow-y:auto;flex:1;color:#cbd5e1;font-size:13px;line-height:1.7;background:#0b1120;border:1px solid #1e293b;border-radius:10px;padding:16px 18px">{{ docView.content }}</div>
+          <div class="doc-content">{{ docView.content }}</div>
         </div>
       </div>
       <div class="input-area" v-if="chat.currentTab === 'chat'">
-        <textarea v-model="question" placeholder="输入问题..." rows="2"
+        <textarea v-model="question" placeholder="输入问题，Enter 发送..." rows="2"
           @keydown.enter.exact.prevent="sendMsg" />
-        <button @click="sendMsg" :disabled="chat.sending || !question.trim()">
+        <button class="btn" @click="sendMsg" :disabled="chat.sending || !question.trim()">
           <span v-if="chat.sending" class="spin"></span>
           {{ chat.sending ? '思考中' : '发 送' }}
         </button>
       </div>
       <div class="messages" v-if="chat.currentTab === 'docs'" style="display:block">
-        <h3 style="color:#94a3b8;font-size:14px;margin-bottom:16px">文档列表</h3>
+        <h3 class="page-title">文档列表</h3>
         <table class="doc-table">
           <thead><tr><th>标题</th><th>类型</th><th>状态</th><th>分块</th><th>日期</th><th></th></tr></thead>
           <tbody>
             <tr v-for="d in docs" :key="d.id">
-              <td><span class="doc-title" @click="viewDoc(d.id)" style="color:#3b82f6;cursor:pointer">{{ d.title }}</span></td>
+              <td><span class="doc-title" @click="viewDoc(d.id)">{{ d.title }}</span></td>
               <td><span :class="['doc-type', d.fileType]">{{ d.fileType }}</span></td>
               <td>
                 <DocStatus :doc="d" />
               </td>
-              <td style="color:#64748b">{{ d.chunkCount || 0 }} 分块</td>
-              <td style="color:#64748b;font-size:12px">{{ d.createdAt?.substring(0,10) }}</td>
-              <td><span @click="removeDoc(d.id)" style="color:#64748b;cursor:pointer">✕</span></td>
+              <td style="color:var(--text-3)">{{ d.chunkCount || 0 }} 分块</td>
+              <td style="color:var(--text-3);font-size:12px">{{ d.createdAt?.substring(0,10) }}</td>
+              <td><span class="icon-btn danger" @click="removeDoc(d.id)">✕</span></td>
             </tr>
-            <tr v-if="!docs.length"><td colspan="6" style="color:#64748b;padding:40px;text-align:center">请先在左侧选择一个知识库</td></tr>
+            <tr v-if="!docs.length"><td colspan="6"><div class="empty-state">请先在左侧选择一个知识库</div></td></tr>
           </tbody>
         </table>
       </div>
       <div class="messages" v-if="chat.currentTab === 'search'" style="display:block">
-        <div style="display:flex;gap:12px;margin-bottom:16px">
-          <input v-model="searchQuery" @keyup.enter="doSearch" placeholder="语义搜索知识库..."
-            style="flex:1;padding:12px 16px;background:#0b1120;border:1px solid #1e293b;border-radius:10px;color:#e2e8f0;font-size:14px" />
-          <button @click="doSearch" style="padding:12px 24px;background:linear-gradient(135deg,#2563eb,#4f46e5);color:#fff;border:none;border-radius:10px;cursor:pointer;font-weight:600">
+        <div class="search-row">
+          <input v-model="searchQuery" @keyup.enter="doSearch" placeholder="语义搜索知识库..." class="search-input" />
+          <button class="btn" @click="doSearch">
             <span v-if="searching" class="spin"></span>{{ searching ? '检索中' : '搜索' }}
           </button>
         </div>
-        <div v-for="r in searchResults" :key="r.rank"
-          style="background:#111827;border:1px solid #1e293b;border-radius:10px;padding:14px 18px;margin-bottom:10px">
-          <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-            <span style="color:#3b82f6;font-weight:600;font-size:14px">{{ r.title }}</span>
-            <span style="color:#22c55e;font-size:12px;font-weight:600">{{ (r.score * 100).toFixed(1) }}%</span>
+        <div v-for="r in searchResults" :key="r.rank" class="search-card">
+          <div class="sc-head">
+            <span class="sc-title">{{ r.title }}</span>
+            <span class="sc-score">{{ (r.score * 100).toFixed(1) }}%</span>
           </div>
-          <div style="color:#94a3b8;font-size:13px;line-height:1.6">{{ r.content?.substring(0, 300) }}</div>
-          <div style="color:#475569;font-size:11px;margin-top:6px">来源: {{ r.kb_name }}</div>
+          <div class="sc-content">{{ r.content?.substring(0, 300) }}</div>
+          <div class="sc-source">来源: {{ r.kb_name }}</div>
         </div>
-        <div v-if="searchDone && !searchResults.length" style="color:#64748b;text-align:center;padding:40px">
+        <div v-if="searchDone && !searchResults.length" class="empty-state">
           {{ searchQuery ? '未找到相关结果' : '输入关键词搜索知识库' }}
         </div>
       </div>
     </div>
     <!-- 入库落定通知（成功/失败），4 秒自动消失 -->
-    <div style="position:fixed;top:20px;right:20px;z-index:1000;display:flex;flex-direction:column;gap:8px">
-      <div v-for="t in toasts" :key="t.id"
-        :style="{ padding:'12px 18px', borderRadius:'10px', fontSize:'13px', maxWidth:'360px', color:'#e2e8f0',
-                  background:'#111827', border:'1px solid ' + (t.type === 'error' ? '#ef4444' : '#22c55e'),
-                  boxShadow:'0 4px 12px rgba(0,0,0,.4)' }">
-        <span :style="{ color: t.type === 'error' ? '#ef4444' : '#22c55e', fontWeight:600 }">
-          {{ t.type === 'error' ? '✕' : '✓' }}</span> {{ t.text }}
+    <div class="toast-wrap">
+      <div v-for="t in toasts" :key="t.id" :class="['toast', { error: t.type === 'error' }]">
+        <span class="t-icon">{{ t.type === 'error' ? '✕' : '✓' }}</span> {{ t.text }}
       </div>
     </div>
   </div>

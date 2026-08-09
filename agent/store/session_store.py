@@ -21,6 +21,7 @@ class SessionStore:
                 host=settings.redis_host,
                 port=settings.redis_port,
                 db=settings.redis_db,
+                password=settings.redis_password or None,
                 decode_responses=True,
             )
         return self._client

@@ -1,11 +1,12 @@
 <template>
   <div class="login-overlay">
     <div class="login-box">
+      <div class="logo-mark">✦</div>
       <h2>Knowledge Agent</h2>
       <div class="sub">知识库智能问答平台</div>
       <input v-model="username" type="text" placeholder="用户名" @keyup.enter="doLogin" />
       <input v-model="password" type="password" placeholder="密码" @keyup.enter="doLogin" />
-      <button @click="doLogin" :disabled="auth.loading">
+      <button class="btn btn-block" @click="doLogin" :disabled="auth.loading">
         <span v-if="auth.loading" class="spin"></span>
         {{ auth.loading ? '登录中...' : '登 录' }}
       </button>

@@ -1,16 +1,16 @@
-{"question": "这本书的作者是哪位？", "expect_title": "《欲望心理学.pdf》的作者是谁？"}
-{"question": "周一南有什么代表作？", "expect_title": "《欲望心理学.pdf》的作者周一南的代表作品是什么？"}
-{"question": "这本书大致在讲什么？", "expect_title": "《欲望心理学.pdf》这本书讲什么？"}
-{"question": "欲望的本质是什么？", "expect_title": "《欲望心理学.pdf》中认为欲望的本质是什么？"}
-{"question": "怎么判断一个人有没有欲望？", "expect_title": "《欲望心理学.pdf》中如何判断一个人的欲望？"}
-{"question": "欲望什么时候会发生质变？", "expect_title": "《欲望心理学.pdf》中认为欲望在什么情况下会发生质变？"}
-{"question": "第四章主要在讲什么？", "expect_title": "《欲望心理学.pdf》第四章的核心主题是什么？"}
-{"question": "距离效应是什么意思？", "expect_title": "《欲望心理学.pdf》中提到的“距离效应”在受赞欲望中指的是什么？"}
-{"question": "阿伦森效应提醒我们什么？", "expect_title": "《欲望心理学.pdf》第四章中“阿伦森效应”对赞美有什么警示？"}
-{"question": "欲望有哪些外在表现？", "expect_title": "《欲望心理学.pdf》第一章中，作者认为欲望可以通过哪些外在表现被洞察？"}
-{"question": "第一章的重点内容是什么？", "expect_title": "《欲望心理学.pdf》第一章的核心信息是什么？"}
-{"question": "微表情和欲望有什么关系？", "expect_title": "《欲望心理学.pdf》中提到的“微表情”与欲望有什么关系？"}
-{"question": "相由心生有什么科学依据？", "expect_title": "《欲望心理学.pdf》中“相由心生”这一观点有什么心理学依据？"}
-{"question": "周一南有什么性格特点？", "expect_title": "周一南在《欲望心理学.pdf》的作者简介中具有哪些性格特点？"}
-{"question": "赞美陷阱是什么？", "expect_title": "《欲望心理学.pdf》第四章如何描述“赞美陷阱”？"}
-{"question": "相由心生怎么解释？", "expect_title": "《欲望心理学.pdf》第一章中，“相由心生”这一概念如何解释欲望与相貌的关系？"}
+{"question": "这本书的作者是哪位？", "expect_title": "《欲望心理学.pdf》的作者是谁？", "expect_keywords": ["欲望心理学", "作者"]}
+{"question": "周一南有什么代表作？", "expect_title": "《欲望心理学.pdf》的作者周一南的代表作品是什么？", "expect_keywords": ["周一南", "代表作"]}
+{"question": "这本书大致在讲什么？", "expect_title": "《欲望心理学.pdf》这本书讲什么？", "expect_keywords": ["欲望心理学", "讲什么"]}
+{"question": "欲望的本质是什么？", "expect_title": "《欲望心理学.pdf》中认为欲望的本质是什么？", "expect_keywords": ["欲望", "本质"]}
+{"question": "怎么判断一个人有没有欲望？", "expect_title": "《欲望心理学.pdf》中如何判断一个人的欲望？", "expect_keywords": ["欲望", "洞察"]}
+{"question": "欲望什么时候会发生质变？", "expect_title": "《欲望心理学.pdf》中认为欲望在什么情况下会发生质变？", "expect_keywords": ["质变"]}
+{"question": "第四章主要在讲什么？", "expect_title": "《欲望心理学.pdf》第四章的核心主题是什么？", "expect_keywords": ["第四章"]}
+{"question": "距离效应是什么意思？", "expect_title": "《欲望心理学.pdf》中提到的“距离效应”在受赞欲望中指的是什么？", "expect_keywords": ["距离效应"]}
+{"question": "阿伦森效应提醒我们什么？", "expect_title": "《欲望心理学.pdf》第四章中“阿伦森效应”对赞美有什么警示？", "expect_keywords": ["阿伦森"]}
+{"question": "欲望有哪些外在表现？", "expect_title": "《欲望心理学.pdf》第一章中，作者认为欲望可以通过哪些外在表现被洞察？", "expect_keywords": ["外在表现"]}
+{"question": "第一章的重点内容是什么？", "expect_title": "《欲望心理学.pdf》第一章的核心信息是什么？", "expect_keywords": ["第一章"]}
+{"question": "微表情和欲望有什么关系？", "expect_title": "《欲望心理学.pdf》中提到的“微表情”与欲望有什么关系？", "expect_keywords": ["微表情", "欲望"]}
+{"question": "相由心生有什么科学依据？", "expect_title": "《欲望心理学.pdf》中“相由心生”这一观点有什么心理学依据？", "expect_keywords": ["相由心生"]}
+{"question": "周一南有什么性格特点？", "expect_title": "周一南在《欲望心理学.pdf》的作者简介中具有哪些性格特点？", "expect_keywords": ["周一南", "性格"]}
+{"question": "赞美陷阱是什么？", "expect_title": "《欲望心理学.pdf》第四章如何描述“赞美陷阱”？", "expect_keywords": ["赞美陷阱"]}
+{"question": "相由心生怎么解释？", "expect_title": "《欲望心理学.pdf》第一章中，“相由心生”这一概念如何解释欲望与相貌的关系？", "expect_keywords": ["相由心生"]}

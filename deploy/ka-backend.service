@@ -8,7 +8,9 @@ Type=simple
 User=ka
 Group=ka
 WorkingDirectory=/opt/knowledge-agent/backend
-ExecStart=/usr/bin/java -jar -Xms512m -Xmx1024m target/knowledge-agent-backend-1.0.0.jar
+# 生产密钥（DB_PASS/JWT_SECRET/AGENT_API_KEY 等）统一放在 /etc/ka.env，缺省不强制
+EnvironmentFile=-/etc/ka.env
+ExecStart=/usr/bin/java -Xms512m -Xmx1024m -jar target/knowledge-agent-backend-1.0.0.jar
 Restart=always
 RestartSec=10
 StandardOutput=append:/var/log/ka/backend.log

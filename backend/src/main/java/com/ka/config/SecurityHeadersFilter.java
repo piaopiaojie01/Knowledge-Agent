@@ -21,7 +21,11 @@ public class SecurityHeadersFilter implements Filter {
         httpResponse.setHeader("X-XSS-Protection", "0");
         httpResponse.setHeader("Cache-Control", "no-cache, no-store, max-age=0, must-revalidate");
         httpResponse.setHeader("Pragma", "no-cache");
-        httpResponse.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:");
+        // P0：收紧 CSP —— 移除 script 的 unsafe-inline / unsafe-eval，降低 XSS 影响面
+        httpResponse.setHeader("Content-Security-Policy",
+                "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                + "img-src 'self' data: https:; connect-src 'self'; font-src 'self' data:; "
+                + "frame-ancestors 'none'; base-uri 'self'; form-action 'self'");
         httpResponse.setHeader("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
         chain.doFilter(request, response);
     }

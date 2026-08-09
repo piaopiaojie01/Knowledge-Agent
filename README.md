@@ -8,9 +8,9 @@
 |------|------|------|
 | API 网关 | Spring Boot 3.2 / Java 17 | 用户认证、权限管理、API 路由 |
 | 智能引擎 | Python 3.11+ / FastAPI | RAG 流程编排、LLM 调用 |
-| 向量模型 | BGE-M3 (BAAI/bge-m3) | 1024 维，中文优化 |
+| 向量模型 | BGE-small-zh (BAAI/bge-small-zh-v1.5) | 512 维，中文优化 |
 | 向量数据库 | Milvus 2.3.3 | 独立部署，IP 相似度检索 |
-| LLM | DeepSeek Flash (deepseek-chat) | OpenAI 兼容接口 |
+| LLM | DeepSeek Flash (deepseek-v4-flash) | OpenAI 兼容接口 |
 | 关系数据库 | MySQL 8.0 | 用户、知识库、文档元数据 |
 | 缓存 | Redis 7 | 会话存储、Agent 状态 |
 | 部署 | Docker Compose | 一键编排所有中间件 |
@@ -256,12 +256,18 @@ g:\Knowledge Agent/
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | KA_DEEPSEEK_API_KEY | - | DeepSeek API Key（必填） |
-| KA_DEEPSEEK_MODEL | deepseek-chat | LLM 模型名 |
-| KA_EMBEDDING_MODEL | BAAI/bge-m3 | Embedding 模型 |
+| KA_DEEPSEEK_MODEL | deepseek-v4-flash | LLM 模型名 |
+| KA_EMBEDDING_MODEL | BAAI/bge-small-zh-v1.5 | Embedding 模型 |
 | KA_EMBEDDING_DEVICE | cpu | 推理设备 (cpu/cuda) |
 | KA_MILVUS_HOST | localhost | Milvus 地址 |
 | KA_RETRIEVAL_TOP_K | 5 | 检索返回数 |
 | KA_RERANK_TOP_K | 3 | 重排序截断数 |
+| KA_INTERNAL_API_KEY | ka-internal-dev-key | 内部访问密钥（后端调用 Agent 用，生产必改） |
+| KA_REDIS_PASSWORD | - | Redis 口令（compose 部署会自动注入） |
+| KA_URL_FETCH_ALLOWLIST | [] | url_fetch 工具域名白名单（空 = 禁用） |
+| KA_MAX_UPLOAD_MB | 100 | 上传体积上限 |
+| KA_CHART_OUTPUT_DIR / KA_ICON_OUTPUT_DIR | 仓库默认目录 | 图表/图标输出目录（容器部署需挂载卷） |
+| KA_CHART_BASE_URL | http://localhost:8080 | 图表访问基础地址 |
 
 ### Spring Boot (application.yml)
 
@@ -270,6 +276,16 @@ g:\Knowledge Agent/
 | jwt.secret | (固定密钥) | JWT 签名密钥，生产环境务必更换 |
 | jwt.expiration | 86400000 | Token 有效期 (24h) |
 | agent.base-url | http://localhost:8000 | Python Agent 地址 |
+| agent.api-key | (env: AGENT_API_KEY) | 调用 Agent 的内部密钥 |
+
+## 安全加固（P0）
+
+- **Agent 内部鉴权**：所有 `/api/v1/rag/*` 端点必须携带 `X-KA-API-Key` 请求头（与 Agent 侧 `KA_INTERNAL_API_KEY` 一致）；Agent 端口不再对外映射。
+- **JWT 撤销**：token 携带 `jti`，登出后写入 Redis 黑名单立即失效；刷新不再为已撤销 token 续期。
+- **工具安全**：`calculate` 由 eval 改为 AST 白名单求值；`url_fetch` 仅允许白名单域名且拦截内网/保留地址（防 SSRF）。
+- **上传校验**：服务端强制大小上限（默认 100MB，`ka.max-upload-mb` 可调），类型白名单校验。
+- **端口收敛**：docker-compose 中 MySQL/Redis/Milvus/MinIO 等仅绑定 127.0.0.1；Redis 默认启用口令。
+- **前端**：401 自动刷新重试一次；登出调用后端撤销 token；nginx/后端 CSP 移除 `unsafe-inline`/`unsafe-eval`。
 
 ## 数据库设计
 

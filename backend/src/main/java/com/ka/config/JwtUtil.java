@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class JwtUtil {
@@ -29,10 +30,16 @@ public class JwtUtil {
                 .subject(username)
                 .claim("userId", userId)
                 .claim("role", role)
+                .id(UUID.randomUUID().toString())
                 .issuedAt(now)
                 .expiration(expiryDate)
                 .signWith(key)
                 .compact();
+    }
+
+    /** 从 token 中提取 jti（用于撤销/黑名单） */
+    public String getJtiFromToken(String token) {
+        return parseToken(token).getId();
     }
 
     public Claims parseToken(String token) {

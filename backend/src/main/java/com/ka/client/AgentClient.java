@@ -18,13 +18,16 @@ public class AgentClient {
 
     private final RestTemplate restTemplate;
     private final String agentBaseUrl;
+    private final String apiKey;
 
     public AgentClient(@Value("${agent.base-url}") String agentBaseUrl,
                        @Value("${agent.connect-timeout:5000}") int connectTimeout,
-                       @Value("${agent.read-timeout:60000}") int readTimeout) {
+                       @Value("${agent.read-timeout:60000}") int readTimeout,
+                       @Value("${agent.api-key:}") String apiKey) {
         this.agentBaseUrl = agentBaseUrl != null && agentBaseUrl.endsWith("/")
                 ? agentBaseUrl.substring(0, agentBaseUrl.length() - 1)
                 : agentBaseUrl;
+        this.apiKey = apiKey;
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectTimeout);
@@ -94,8 +97,11 @@ public class AgentClient {
     /** 查询后台入库任务状态；agent 不可达/无记录时返回 status=unknown，不抛异常 */
     public IngestStatusResponse ingestStatus(Long docId) {
         try {
-            Map<String, Object> rb = restTemplate.getForEntity(
-                    agentBaseUrl + "/api/v1/rag/ingest/" + docId + "/status", Map.class).getBody();
+            HttpHeaders headers = jsonHeaders();
+            HttpEntity<Void> entity = new HttpEntity<>(headers);
+            Map<String, Object> rb = restTemplate.exchange(
+                    agentBaseUrl + "/api/v1/rag/ingest/" + docId + "/status",
+                    HttpMethod.GET, entity, Map.class).getBody();
             if (rb == null) return new IngestStatusResponse("unknown", "Agent 空", 0, 0, 0, 0);
             return new IngestStatusResponse(
                     (String) rb.getOrDefault("status", "unknown"),
@@ -132,7 +138,15 @@ public class AgentClient {
         } catch (RestClientException e) { return new IngestResponse(false, e.getMessage(), null); }
     }
 
-    private HttpHeaders jsonHeaders() { return new HttpHeaders() {{ setContentType(MediaType.APPLICATION_JSON); }}; }
+    private HttpHeaders jsonHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        if (apiKey != null && !apiKey.isBlank()) {
+            // P0：Agent 内部鉴权密钥，防止 8000 端口被未授权调用
+            headers.set("X-KA-API-Key", apiKey);
+        }
+        return headers;
+    }
     private int toInt(Object o) { if (o instanceof Number n) return n.intValue(); return 0; }
 
 

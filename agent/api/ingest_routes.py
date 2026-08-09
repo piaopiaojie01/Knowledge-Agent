@@ -107,18 +107,18 @@ def reset_interrupted_tasks():
 
 class IngestRequest(BaseModel):
     doc_id: int = Field(...)
-    title: str = Field(...)
-    kb_name: str = Field(...)
-    content: str = Field(...)
+    title: str = Field(..., max_length=500)
+    kb_name: str = Field(..., max_length=200)
+    content: str = Field(..., max_length=10_000_000)
     chunk_size: int = 512
     chunk_overlap: int = 64
 
 
 class PdfUpload(BaseModel):
     doc_id: int
-    title: str
-    kb_name: str
-    pdf_base64: str
+    title: str = Field(..., max_length=500)
+    kb_name: str = Field(..., max_length=200)
+    pdf_base64: str = Field(..., min_length=1)
     device: str | None = None  # cpu / cuda，缺省用服务端配置 ocr_device
 
 
@@ -249,6 +249,15 @@ def _try_start_task(doc_id: int, target, args) -> bool:
         return True
 
 
+def _validate_pdf_upload(req: PdfUpload) -> None:
+    """P0：base64 体积上限校验，拒绝超大上传（服务端不信任请求方声明）"""
+    max_bytes = settings.max_upload_mb * 1024 * 1024
+    # base64 长度 ≈ 4/3 * 原始字节数，留 4KB 余量
+    if len(req.pdf_base64) > (max_bytes * 4 // 3) + 4096:
+        raise HTTPException(status_code=413,
+                            detail=f"文件超过大小上限（{settings.max_upload_mb}MB）")
+
+
 @router.post("/ingest")
 async def ingest_document(req: IngestRequest):
     if not milvus_client.is_connected: raise HTTPException(status_code=503)
@@ -294,6 +303,7 @@ def _do_ingest_pdf(req: PdfUpload):
 async def ingest_pdf(req: PdfUpload):
     """PDF 入库：提取 → Markdown 格式化 → 语义切分 → QA → 入库（后台线程执行，状态走 /ingest/{doc_id}/status）"""
     if not milvus_client.is_connected: raise HTTPException(status_code=503)
+    _validate_pdf_upload(req)
     if not _try_start_task(req.doc_id, _do_ingest_pdf, (req,)):
         return {"success": True, "doc_id": req.doc_id, "status": "already_processing"}
     return {"success": True, "doc_id": req.doc_id, "status": "processing"}
@@ -320,6 +330,7 @@ def _do_ingest_image(req: PdfUpload):
 async def ingest_image(req: PdfUpload):
     """图片入库：OCR → 语义切分 → QA → 入库（后台线程执行，状态走 /ingest/{doc_id}/status）"""
     if not milvus_client.is_connected: raise HTTPException(status_code=503)
+    _validate_pdf_upload(req)
     if not _try_start_task(req.doc_id, _do_ingest_image, (req,)):
         return {"success": True, "doc_id": req.doc_id, "status": "already_processing"}
     return {"success": True, "doc_id": req.doc_id, "status": "processing"}

@@ -2,6 +2,8 @@
 import json
 import logging
 import re
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 from openai import OpenAI
 from config import settings
@@ -85,15 +87,21 @@ class DocumentProcessor:
         self.model = settings.deepseek_model
 
     def _call_llm(self, prompt: str, max_tokens: int = 1024) -> str:
-        try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.1, max_tokens=max_tokens)
-            return resp.choices[0].message.content.strip()
-        except Exception as e:
-            logger.error(f"LLM call failed: {e}")
-            return ""
+        """调 LLM：90s 超时防止限流时长时间挂死，失败指数退避重试，3 次失败放弃该段"""
+        for attempt in range(3):
+            try:
+                resp = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.1, max_tokens=max_tokens, timeout=90)
+                return resp.choices[0].message.content.strip()
+            except Exception as e:
+                if attempt == 2:
+                    logger.error(f"LLM call failed after 3 attempts: {e}")
+                    return ""
+                wait = 2 * (attempt + 1)
+                logger.warning(f"LLM call failed (attempt {attempt + 1}/3), retry in {wait}s: {e}")
+                time.sleep(wait)
 
     def _split_sections(self, text: str, max_chars: int = 1200) -> List[str]:
         """语义切分：优先按 ## 标题切，无标题则按段落 + 长度切"""
@@ -143,54 +151,68 @@ class DocumentProcessor:
         q_prompt = QA_PROMPT_EN if lang == "en" else QA_PROMPT
         logger.info(f"文档[{title}]: 检测语言={lang}, {len(sections)} 个段落")
 
+        # 段间并发：OpenAI SDK 客户端线程安全；as_completed 在调用方单线程汇总，进度计数无需加锁
+        workers = max(1, settings.ingest_llm_concurrency)
+        logger.info(f"QA 生成并发度: {workers}")
         all_qa = []
-        for i, chunk in enumerate(sections):
-            try:
-                # Step 2: 结构化提取
-                prompt = s_prompt.format(title=title, chunk=chunk[:2000])
-                raw = self._call_llm(prompt, max_tokens=512)
-                info = self._parse_json(raw)
-                # LLM 偶尔返回 JSON 数组而非对象，取首个 dict 兼容，避免整段被丢弃
-                if isinstance(info, list):
-                    info = next((x for x in info if isinstance(x, dict)), None)
-                if not isinstance(info, dict) or not info:
-                    continue
-
-                # Step 3: 生成 QA 对
-                qa_prompt = q_prompt.format(
-                    title=title,
-                    module=info.get("module", ""),
-                    section_title=info.get("title", ""),
-                    summary=info.get("summary", ""),
-                    keywords=", ".join(info.get("keywords", [])),
-                    text=info.get("content", chunk[:800])
-                )
-                qa_raw = self._call_llm(qa_prompt, max_tokens=1024)
-                qa_pairs = self._parse_json(qa_raw)
-
-                if isinstance(qa_pairs, list):
-                    for qa in qa_pairs:
-                        if isinstance(qa, dict) and qa.get("question"):
-                            all_qa.append({
-                                "title": qa["question"],
-                                "content": qa.get("answer", ""),
-                                "source_content": info.get("content", chunk[:500]),
-                                "module": info.get("module", ""),
-                                "keywords": ", ".join(info.get("keywords", []))
-                            })
-                logger.info(f"  段{i+1}: 模块={info.get('module','')} → {len(qa_pairs) if isinstance(qa_pairs,list) else 0} QA")
-            except Exception as e:
-                logger.warning(f"段{i+1}处理失败: {e}")
-                continue
-            finally:
+        done_count = 0
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(self._process_section, title, s_prompt, q_prompt, chunk, i)
+                       for i, chunk in enumerate(sections)}
+            for fut in as_completed(futures):
+                all_qa.extend(fut.result())
+                done_count += 1
                 if progress_cb:
                     try:
-                        progress_cb(i + 1, len(sections))
+                        progress_cb(done_count, len(sections))
                     except Exception:
                         pass  # 进度回报失败不影响入库主流程
 
         logger.info(f"文档[{title}]共生成 {len(all_qa)} 个 QA 对")
         return all_qa
+
+    def _process_section(self, title: str, s_prompt: str, q_prompt: str,
+                         chunk: str, index: int) -> List[Dict[str, Any]]:
+        """单段处理：结构化提取 → QA 生成（无共享状态，供线程池并发调用）"""
+        try:
+            # Step 2: 结构化提取
+            prompt = s_prompt.format(title=title, chunk=chunk[:2000])
+            raw = self._call_llm(prompt, max_tokens=512)
+            info = self._parse_json(raw)
+            # LLM 偶尔返回 JSON 数组而非对象，取首个 dict 兼容，避免整段被丢弃
+            if isinstance(info, list):
+                info = next((x for x in info if isinstance(x, dict)), None)
+            if not isinstance(info, dict) or not info:
+                return []
+
+            # Step 3: 生成 QA 对
+            qa_prompt = q_prompt.format(
+                title=title,
+                module=info.get("module", ""),
+                section_title=info.get("title", ""),
+                summary=info.get("summary", ""),
+                keywords=", ".join(info.get("keywords", [])),
+                text=info.get("content", chunk[:800])
+            )
+            qa_raw = self._call_llm(qa_prompt, max_tokens=1024)
+            qa_pairs = self._parse_json(qa_raw)
+
+            result = []
+            if isinstance(qa_pairs, list):
+                for qa in qa_pairs:
+                    if isinstance(qa, dict) and qa.get("question"):
+                        result.append({
+                            "title": qa["question"],
+                            "content": qa.get("answer", ""),
+                            "source_content": info.get("content", chunk[:500]),
+                            "module": info.get("module", ""),
+                            "keywords": ", ".join(info.get("keywords", []))
+                        })
+            logger.info(f"  段{index+1}: 模块={info.get('module','')} → {len(qa_pairs) if isinstance(qa_pairs,list) else 0} QA")
+            return result
+        except Exception as e:
+            logger.warning(f"段{index+1}处理失败: {e}")
+            return []
 
     def _parse_json(self, raw: str) -> Any:
         """鲁棒 JSON 解析"""

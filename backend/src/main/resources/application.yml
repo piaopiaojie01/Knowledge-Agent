@@ -47,6 +47,8 @@ jwt:
 
 agent:
   base-url: ${AGENT_URL:http://localhost:8000}
+  # P0：调用 Agent 的内部鉴权密钥（与 Agent 侧 KA_INTERNAL_API_KEY 保持一致）
+  api-key: ${AGENT_API_KEY:}
   connect-timeout: 5000
   read-timeout: 60000
 
@@ -64,6 +66,8 @@ ka:
     - /api/auth/refresh
     - /api/health
     - /favicon.ico
+  jwt-blacklist-enabled: true
+  max-upload-mb: 100
   login-max-failures: 5
   login-lock-minutes: 30
   audit-retention-days: 365

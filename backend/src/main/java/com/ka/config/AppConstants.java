@@ -50,4 +50,10 @@ public class AppConstants {
 
     /** 密码最小长度 */
     private int passwordMinLength = 8;
+
+    /** JWT 撤销黑名单开关（Redis）。Redis 不可用时 fail-closed */
+    private boolean jwtBlacklistEnabled = true;
+
+    /** 上传文件大小上限（MB） */
+    private long maxUploadMb = 100;
 }

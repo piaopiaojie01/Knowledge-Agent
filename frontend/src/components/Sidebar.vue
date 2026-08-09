@@ -1,6 +1,6 @@
 <template>
   <div class="sidebar">
-    <h2>知识库 <button @click="createKb">＋ 新建</button></h2>
+    <h2>知识库 <button class="btn-ghost btn-sm" @click="createKb">＋ 新建</button></h2>
     <input type="text" v-model="kb.searchText" placeholder="搜索知识库..." />
     <div class="kb-list" style="max-height:30vh;overflow-y:auto;margin-bottom:4px;flex-shrink:0">
       <div v-for="k in kb.filteredKbs" :key="k.id"
@@ -8,10 +8,8 @@
         @click="kb.toggle(k.id)">
         <span><input type="checkbox" :checked="kb.selectedKbs.has(k.id)" @click.prevent />{{ k.name }}</span>
         <span class="kb-actions" style="display:flex;gap:2px">
-          <span style="font-size:12px;color:#64748b"
-            @click.stop="editKb(k)" title="设置">✎</span>
-          <span class="del" style="font-size:14px;color:#475569"
-            @click.stop="confirmRemoveKb(k.id)" title="删除">×</span>
+          <span class="icon-btn" @click.stop="editKb(k)" title="设置">✎</span>
+          <span class="icon-btn danger" @click.stop="confirmRemoveKb(k.id)" title="删除">×</span>
         </span>
       </div>
     </div>
@@ -19,7 +17,7 @@
     <div class="conv-section" style="flex:1;overflow-y:auto;min-height:0">
       <div class="title-row">
         <span>对话记录</span>
-        <button @click="chat.newSession()">新建</button>
+        <button class="btn-ghost btn-sm" @click="chat.newSession()">新建</button>
       </div>
       <div v-for="s in chat.sessions" :key="s.sessionId"
         :class="['conv-item', { active: s.sessionId === chat.sessionId }]">
@@ -34,7 +32,7 @@
     </div>
 
     <div class="upload-area">
-      <div class="section-label" style="font-size:11px;color:#64748b;margin-bottom:6px">上传文档</div>
+      <div class="section-label">上传文档</div>
       <div class="upload-dropzone" :class="{ dragging: isDragging }"
         @click="fileInput.click()"
         @dragenter.prevent="isDragging = true"
@@ -42,26 +40,26 @@
         @dragleave.prevent="isDragging = false"
         @drop.prevent="onDrop">
         <template v-if="file">
-          📄 {{ file.name }}<br>
-          <small style="color:#64748b;font-size:10px">已选择，点击可更换</small>
+          <span class="dz-icon">📄</span>{{ file.name }}<br>
+          <small style="color:var(--text-3);font-size:10px">已选择，点击可更换</small>
         </template>
         <template v-else>
-          📂 点击或拖拽文件到此处<br>
-          <small style="color:#64748b;font-size:10px">支持 TXT / Markdown / PDF / 图片</small>
+          <span class="dz-icon">📂</span>点击或拖拽文件到此处<br>
+          <small style="color:var(--text-3);font-size:10px">支持 TXT / Markdown / PDF / 图片</small>
         </template>
         <input ref="fileInput" type="file" accept=".txt,.md,.pdf,.png,.jpg,.jpeg" @change="handleFile" @click.stop hidden />
       </div>
-      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:#64748b">
+      <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text-3)">
         解析设备
-        <select v-model="parseDevice" style="flex:1;background:#0b1120;color:#e2e8f0;border:1px solid #1e293b;border-radius:6px;padding:4px 6px;font-size:11px">
+        <select v-model="parseDevice" class="select" style="flex:1">
           <option value="cpu">CPU（兼容性好）</option>
           <option value="cuda">GPU（扫描件更快）</option>
         </select>
       </div>
-      <button class="upload-submit-btn" @click="doUpload" :disabled="!file">⬆ 上传并入库</button>
+      <button class="btn upload-submit-btn" @click="doUpload" :disabled="!file">⬆ 上传并入库</button>
       <!-- 刚上传文档的入库进度（每 3 秒轮询，落定后 6 秒自动消失） -->
-      <div v-for="u in uploads" :key="u.id" style="margin-top:8px;padding:8px;background:#0b1120;border:1px solid #1e293b;border-radius:8px">
-        <div style="font-size:11px;color:#94a3b8;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" :title="u.title">{{ u.title }}</div>
+      <div v-for="u in uploads" :key="u.id" class="upload-card">
+        <div class="uc-title" :title="u.title">{{ u.title }}</div>
         <DocStatus :doc="u" />
       </div>
     </div>

@@ -6,6 +6,8 @@ set "BACKEND_DIR=%~dp0backend"
 set "FRONTEND_DIR=%~dp0frontend"
 set "VENV_PYTHON=%AGENT_DIR%\.venv\Scripts\python.exe"
 set "CURL=%SystemRoot%\System32\curl.exe"
+set "INTERNAL_KEY=ka-internal-dev-key"
+set "REDIS_PASS=ka_redis_dev_2026"
 
 echo ========================================
 echo   Knowledge Agent 一键启动
@@ -29,10 +31,10 @@ echo   MySQL / Redis / Milvus 已就绪
 :: ── 2. Agent ───────────────────────────
 echo.
 echo [2/4] 启动 Agent (GPU) ...
-start "KA Agent" cmd /c "cd /d %AGENT_DIR% && set KA_EMBEDDING_DEVICE=cuda && %VENV_PYTHON% main.py"
+start "KA Agent" cmd /c "cd /d %AGENT_DIR% && set KA_EMBEDDING_DEVICE=cuda && set KA_INTERNAL_API_KEY=%INTERNAL_KEY% && set KA_REDIS_PASSWORD=%REDIS_PASS% && %VENV_PYTHON% main.py"
 echo   等待 Agent 就绪...
 :wait_agent
-%CURL% -s http://localhost:8000/api/v1/rag/health >nul 2>&1
+%CURL% -s -H "X-KA-API-Key: %INTERNAL_KEY%" http://localhost:8000/api/v1/rag/health >nul 2>&1
 if %ERRORLEVEL% NEQ 0 ( timeout /t 1 /nobreak >nul && goto wait_agent )
 echo   Agent 已就绪
 
@@ -40,10 +42,10 @@ echo   Agent 已就绪
 echo.
 echo [3/4] 启动 Spring Boot ...
 if exist "%BACKEND_DIR%\target\knowledge-agent-backend-1.0.0.jar" (
-    start "KA Backend" cmd /c "cd /d %BACKEND_DIR% && java -jar target\knowledge-agent-backend-1.0.0.jar --spring.profiles.active=dev"
+    start "KA Backend" cmd /c "cd /d %BACKEND_DIR% && set AGENT_API_KEY=%INTERNAL_KEY% && set AGENT_URL=http://localhost:8000 && set REDIS_PASSWORD=%REDIS_PASS% && java -jar target\knowledge-agent-backend-1.0.0.jar --spring.profiles.active=dev"
 ) else (
     echo   未找到 jar，使用 mvn spring-boot:run（首次较慢）...
-    start "KA Backend" cmd /c "cd /d %BACKEND_DIR% && mvn spring-boot:run"
+    start "KA Backend" cmd /c "cd /d %BACKEND_DIR% && set AGENT_API_KEY=%INTERNAL_KEY% && set AGENT_URL=http://localhost:8000 && set REDIS_PASSWORD=%REDIS_PASS% && mvn spring-boot:run"
 )
 echo   等待 Spring Boot 就绪...
 :wait_boot

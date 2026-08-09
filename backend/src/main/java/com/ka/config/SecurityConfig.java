@@ -37,6 +37,8 @@ public class SecurityConfig {
     @Lazy
     private final JwtAuthFilter jwtAuthFilter;
 
+    private final AppConstants constants;
+
     @Bean
     public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
         http
@@ -69,13 +71,7 @@ public class SecurityConfig {
     /** CORS 白名单：从 AppConstants（application.yml）注入 */
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
-        List<String> allowedOrigins = Arrays.asList(
-            "http://localhost:8080",
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "http://localhost:9888",
-            "https://knowledge-agent.your-company.com"
-        );
+        List<String> allowedOrigins = constants.getCorsOrigins();
         CorsConfiguration config = new CorsConfiguration();
         config.setAllowedOrigins(allowedOrigins);
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
