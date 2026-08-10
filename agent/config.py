@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     # 推理设备：cpu / cuda（有 NVIDIA GPU 时在 .env 里改成 cuda 可大幅提速）
     embedding_device: str = "cpu"
     ocr_device: str = "cpu"
-    reranker_device: str = "cpu"
+    # 有 NVIDIA GPU 时用 cuda 精排（加载失败自动降级 CPU/分数排序）
+    reranker_device: str = "cuda"
 
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
@@ -25,8 +26,9 @@ class Settings(BaseSettings):
     # 入库 QA 生成的 LLM 调用并发度（大文档提速；API 限流严重时调低）
     ingest_llm_concurrency: int = 8
 
-    retrieval_top_k: int = 5
-    rerank_top_k: int = 3
+    # 候选池给足，让 CrossEncoder 从更多候选中精排，避免碎片块挤掉正文块
+    retrieval_top_k: int = 20
+    rerank_top_k: int = 8
     min_score: float = 0.35
     # 有效来源判定阈值（基于未稀释的向量余弦分 vector_score）
     source_threshold: float = 0.55

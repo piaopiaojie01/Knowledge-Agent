@@ -26,14 +26,16 @@ def test_query_words_filters_single_chars():
 def test_keyword_score_title_weight_clipped():
     # 验证 title 命中 ×2 加权后 clip 到 1.0（两个词都在 title 命中：2*2/2=2.0 → 1.0）
     r = Retriever()
-    score = r._keyword_score({"苹果", "香蕉"}, title="苹果香蕉对比", content="无关内容")
+    score = r._keyword_score({"苹果", "香蕉"}, title="苹果香蕉对比",
+                             content="这里是完全无关的正文内容说明文字")
     assert score == 1.0
 
 
 def test_keyword_score_content_only_partial():
     # 验证仅 content 命中时按命中比例计分
     r = Retriever()
-    score = r._keyword_score({"苹果", "香蕉"}, title="无关标题", content="这里有苹果没有别的")
+    score = r._keyword_score({"苹果", "香蕉"}, title="无关标题",
+                             content="这里有一些苹果但没有任何其它相关内容的说明文字")
     assert score == pytest.approx(0.5)  # 命中 1/2
 
 

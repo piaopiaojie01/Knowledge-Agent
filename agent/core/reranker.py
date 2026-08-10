@@ -1,5 +1,6 @@
 """重排序模块 - CrossEncoder (bge-reranker-v2-m3) 精排，失败时降级为分数排序"""
 import logging
+import re
 import threading
 import time
 from typing import List, Dict, Any
@@ -10,6 +11,12 @@ logger = logging.getLogger(__name__)
 RERANK_MODEL_NAME = "BAAI/bge-reranker-v2-m3"
 # 模型加载失败后的重试冷却时间（秒）
 LOAD_RETRY_COOLDOWN = 300
+# 元信息类提问（作者/版权/ISBN/简介/目录等）：给元信息块额外加分。
+# bge-reranker 对“作者简介周一南，袓籍安徽……”这类描述式段落打分偏低，
+# 但这类段落恰是作者/版权类问题的正确答案，需要叠加 meta 分修正排序。
+META_QUERY_RE = re.compile(
+    r"作者|谁写|谁著|著者|版权|isbn|出版社|出版信息|简介|序言|前言|目录|定价|多少钱|价格|页数|多少页",
+    re.IGNORECASE)
 
 
 class Reranker:
@@ -40,6 +47,13 @@ class Reranker:
     def _passes_threshold(self, d: Dict[str, Any]) -> bool:
         """min_score 阈值判定基于未稀释的向量余弦分（融合分仅用于排序展示）"""
         return d.get("vector_score", d.get("score", 0)) >= self.min_score
+
+    def _meta_bonus(self, query: str, d: Dict[str, Any]) -> float:
+        """元信息提问时，对作者简介/版权页等元信息块加权，避免被重排器压掉"""
+        if not META_QUERY_RE.search(query):
+            return 0.0
+        meta = d.get("meta_score", 0)
+        return 0.30 if meta >= 1.0 else (0.15 if meta >= 0.5 else 0.0)
 
     def _best_fallback(self, documents: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """全部低于阈值时兜底返回最高分 1 条"""
@@ -82,7 +96,8 @@ class Reranker:
             for d, s in zip(candidates, scores):
                 d["rerank_score"] = float(s)
             reranked = sorted(candidates,
-                              key=lambda x: x.get("rerank_score", float("-inf")),
+                              key=lambda x: x.get("rerank_score", float("-inf"))
+                                           + self._meta_bonus(query, x),
                               reverse=True)[:top_k]
             logger.info(f"重排序(cross-encoder): {len(documents)} → {len(reranked)} 条")
             return reranked

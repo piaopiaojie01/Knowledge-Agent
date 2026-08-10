@@ -213,8 +213,11 @@ def _extract_toc(text: str) -> tuple:
     lines = body.splitlines()
     end = len(body)
     for i, ln in enumerate(lines):
-        if re.match(r'^\s*第[一二三四五六七八九十百\d]+章\s*$', ln) \
-                or re.match(r'^\s*第[一二三四五六七八九十百\d]+章\s+[^\s：:]{2,10}$', ln):
+        # markdown 标题带 "## " 前缀，先剥掉再匹配章节行
+        ln_clean = ln.lstrip("#").strip()
+        # 严格匹配：独立章节行，或章节名后跟 2-10 个非冒号字符（带冒号的目录条目不算正文起点）
+        if re.match(r'^第[一二三四五六七八九十百\d]+章\s*$', ln_clean) \
+                or re.match(r'^第[一二三四五六七八九十百\d]+章\s+[^\s：:]{2,10}$', ln_clean):
             acc = ""
             for j in range(i + 1, min(i + 10, len(lines))):
                 s = lines[j].strip()
@@ -261,7 +264,11 @@ def _split_units(text: str) -> List[tuple]:
             flush()
     flush()
     if not units:
-        units = [([], text.strip())]
+        # 全标题退化保护：若整篇都被识别为标题（如 PDF 字号异常），
+        # 按空行段落兜底成单元，避免整个文档塌缩成单块
+        units = [([], p.strip()) for p in re.split(r"\n\s*\n", text) if p.strip()]
+        if not units:
+            units = [([], text.strip())]
     # 合并连续的目录/目录延续单元，保证完整目录不被拆散
     merged = []
     for headings, content in units:
@@ -331,6 +338,35 @@ def semantic_chunk_text(text: str, chunk_tokens: int | None = None,
                 chunk = (prefix + piece).strip()
                 if chunk:
                     chunks.append(chunk)
+    # 短碎片合并：PDF 断行/句切分常产生大量 1~15 字碎片（页眉/断行残留），
+    # 向量化质量差且检索时虚高分抢占候选位；把碎片累积并入相邻块
+    # （碎片攒到 120+ 自成一快，否则并入下个长块）
+    def _is_fragment(chunk: str) -> bool:
+        c = chunk.strip()
+        if len(c) < 15:
+            return True
+        # 无句末标点且偏短的残句也算碎片（完整短句保留，不影响语义边界）
+        return len(c) < 40 and not re.search(r"[。！？!?；;]$", c)
+
+    MERGE_TARGET = 120
+    merged_chunks = []
+    short_buf = ""
+    for c in chunks:
+        if _is_fragment(c):
+            short_buf += c.strip() + "\n"
+            if len(short_buf) >= MERGE_TARGET:
+                merged_chunks.append(short_buf.rstrip())
+                short_buf = ""
+        else:
+            if short_buf:
+                merged_chunks.append((short_buf + c).strip())
+                short_buf = ""
+            else:
+                merged_chunks.append(c)
+    if short_buf:
+        merged_chunks.append(short_buf.rstrip())
+    chunks = merged_chunks
+
     # Milvus content 上限 4096 保护：字符超长块按窗口硬切（保留全部内容）
     max_chars = 2400
     capped = []

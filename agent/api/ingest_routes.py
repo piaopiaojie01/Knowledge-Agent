@@ -208,9 +208,11 @@ def _pdf_to_markdown(pdf_bytes: bytes, progress_cb=None) -> str:
                 if not text:
                     continue
                 avg_size = sum(font_sizes) / len(font_sizes) if font_sizes else 10
-                # 标题检测：字号 > 14 或 匹配章节/编号模式
+                # 标题检测：仅按章节/编号模式识别标题，不依赖字号。
+                # 注意：部分 PDF（如《欲望心理学》）get_text("dict") 字号异常，
+                # 正文行也报 >14pt 且行短，若用字号判断会把整篇正文误标成标题。
                 heading_pattern = r'^(第[一二三四五六七八九十\d]+[章节篇]|\d+[.、．]|[IVX]+[.、]|序言|前言|目录|附录|参考文献|摘要|Abstract|Introduction|Chapter\s*\d+)'
-                is_heading = avg_size > 14 or bool(re.match(heading_pattern, text, re.IGNORECASE))
+                is_heading = bool(re.match(heading_pattern, text, re.IGNORECASE))
                 if is_heading:
                     page_lines.append(f"## {text}")
                 else:
@@ -230,7 +232,8 @@ def _pdf_to_markdown(pdf_bytes: bytes, progress_cb=None) -> str:
                 page_lines.append(f"\n[表格]\n{md}")
 
         if page_lines:
-            parts.append(f"## 第{pi+1}页\n" + "\n".join(page_lines))
+            # 页码标记对检索无价值且混入正文（QQ 水印等），不写入分块
+            parts.append("\n".join(page_lines))
         if progress_cb:
             try:
                 progress_cb(pi + 1, total_pages)
@@ -283,10 +286,12 @@ def _do_ingest_pdf(req: PdfUpload):
     _set_progress(doc_id, 0, "PDF 解析中...")
     try:
         pdf_bytes = base64.b64decode(req.pdf_base64)
+        logger.info(f"PDF ingest: doc={doc_id}, bytes={len(pdf_bytes)}")
         text = _pdf_to_markdown(
             pdf_bytes,
             progress_cb=lambda d, t: _set_progress(
                 doc_id, int(30 * d / max(t, 1)), f"PDF 解析中（{d}/{t} 页）...", t, d))
+        logger.info(f"PDF parsed: doc={doc_id}, chars={len(text)}")
         if not text.strip():
             logger.info(f"PDF 无文字，启用 OCR({ _resolve_device(req.device) }): {req.title}")
             _set_progress(doc_id, 5, "扫描件 OCR 识别中（Docling）...")

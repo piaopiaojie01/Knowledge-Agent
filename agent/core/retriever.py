@@ -35,6 +35,9 @@ class Retriever:
         中英双语：英文统一小写并去停用词，AI/ai、Company's/company 可命中"""
         if not query_words:
             return 0.0
+        # 短碎片（页眉/断行残留）不给关键词分，避免虚高抢占候选位
+        if len((content or "").strip()) < 15:
+            return 0.0
         content_words = set(normalize_words(content or "", min_len=2))
         title_words = set(normalize_words(title or "", min_len=2))
         hit = 0
