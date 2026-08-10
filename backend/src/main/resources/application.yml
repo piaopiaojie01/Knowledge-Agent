@@ -78,3 +78,12 @@ ka:
   login-lock-minutes: 30
   audit-retention-days: 365
   password-min-length: 8
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: knowledge-agent

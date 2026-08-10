@@ -113,6 +113,15 @@ public class AgentClient {
         return postIngest("/api/v1/rag/ingest-image", body);
     }
 
+    /** Excel 入库：agent 同步解析并返回内容预览（供 MySQL 全文搜索/展示） */
+    public IngestResponse ingestExcel(Long docId, String title, String kbName, byte[] bytes) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("doc_id", docId); body.put("title", title); body.put("kb_name", kbName);
+        // 复用 PdfUpload 模型字段名 pdf_base64
+        body.put("pdf_base64", java.util.Base64.getEncoder().encodeToString(bytes));
+        return postIngest("/api/v1/rag/ingest-excel", body);
+    }
+
     /** 查询后台入库任务状态；agent 不可达/无记录时返回 status=unknown，不抛异常 */
     public IngestStatusResponse ingestStatus(Long docId) {
         try {
@@ -153,7 +162,8 @@ public class AgentClient {
             Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + url, req, Map.class).getBody();
             if (rb == null) return new IngestResponse(false, "Agent 空", null);
             return new IngestResponse((boolean) rb.getOrDefault("success", false),
-                    (String) rb.getOrDefault("message", ""), (String) rb.getOrDefault("status", "unknown"));
+                    (String) rb.getOrDefault("message", ""), (String) rb.getOrDefault("status", "unknown"),
+                    (String) rb.getOrDefault("content_preview", ""));
         } catch (RestClientException e) { return new IngestResponse(false, e.getMessage(), null); }
     }
 
@@ -163,6 +173,11 @@ public class AgentClient {
         if (apiKey != null && !apiKey.isBlank()) {
             // P0：Agent 内部鉴权密钥，防止 8000 端口被未授权调用
             headers.set("X-KA-API-Key", apiKey);
+        }
+        // 可观测性：透传请求 ID，便于 Agent 日志串联
+        String rid = org.slf4j.MDC.get(com.ka.config.RequestIdFilter.MDC_KEY);
+        if (rid != null && !rid.isBlank()) {
+            headers.set("X-Request-Id", rid);
         }
         return headers;
     }
@@ -181,6 +196,11 @@ public class AgentClient {
     @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor
     public static class IngestResponse {
         private boolean success; private String message; private String status;
+        private String contentPreview;
+
+        public IngestResponse(boolean success, String message, String status) {
+            this(success, message, status, null);
+        }
     }
 
     @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor

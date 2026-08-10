@@ -12,6 +12,7 @@ import com.ka.service.LlmCostService;
 import com.ka.service.ModelConfigService;
 import com.ka.service.McpServerService;
 import com.ka.service.SkillService;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
@@ -49,6 +50,7 @@ public class RagController {
     private final SkillService skillService;
     private final McpServerService mcpServerService;
     private final LlmCostService llmCostService;
+    private final MeterRegistry meterRegistry;
 
     @Value("${agent.base-url}")
     private String agentBaseUrl;
@@ -110,8 +112,16 @@ public class RagController {
                 agentResp.isSuccess() ? "OK" : "FAIL", httpReq.getRemoteAddr());
 
         if (agentResp.isSuccess()) {
+            meterRegistry.counter("ka.rag.queries", "result", "success").increment();
+            meterRegistry.counter("ka.rag.tokens").increment(
+                    agentResp.getInputTokens() + agentResp.getOutputTokens());
+            log.info("RAG query success: question={}",
+                    request.getQuestion().substring(0, Math.min(50, request.getQuestion().length())));
             return ApiResponse.success(response);
         } else {
+            meterRegistry.counter("ka.rag.queries", "result", "error").increment();
+            log.info("RAG query error: question={}",
+                    request.getQuestion().substring(0, Math.min(50, request.getQuestion().length())));
             return ApiResponse.error(500, response.getAnswer());
         }
     }
@@ -119,6 +129,7 @@ public class RagController {
     @PostMapping("/query/stream")
     public SseEmitter queryStream(@Valid @RequestBody RagQueryRequest request) {
         validateKbAccess(request.getKbNames());
+        meterRegistry.counter("ka.rag.streams").increment();
 
         SseEmitter emitter = new SseEmitter(120_000L);
 
@@ -154,6 +165,11 @@ public class RagController {
                 // P0：Agent 内部鉴权（与 AgentClient 一致），漏掉会导致流式 401
                 if (agentApiKey != null && !agentApiKey.isBlank()) {
                     reqBuilder.header("X-KA-API-Key", agentApiKey);
+                }
+                // 可观测性：透传请求 ID，便于 Agent 日志串联
+                String rid = org.slf4j.MDC.get(com.ka.config.RequestIdFilter.MDC_KEY);
+                if (rid != null && !rid.isBlank()) {
+                    reqBuilder.header("X-Request-Id", rid);
                 }
                 HttpRequest httpReq = reqBuilder.build();
                 HttpResponse<Stream<String>> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofLines());

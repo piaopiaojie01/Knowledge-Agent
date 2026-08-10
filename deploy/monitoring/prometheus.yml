@@ -1,0 +1,20 @@
+# Prometheus 抓取配置
+# 注意：当前 dev 模式下 backend/agent 跑在宿主机（非容器），容器内采集必须走 host.docker.internal
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: ka-backend
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8082"]
+        labels:
+          service: knowledge-agent-backend
+
+  - job_name: ka-agent
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8000"]
+        labels:
+          service: knowledge-agent-agent
