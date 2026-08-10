@@ -43,6 +43,14 @@ def test_keyword_score_empty_query_words():
     assert r._keyword_score(set(), title="t", content="c") == 0.0
 
 
+def test_meta_score_strong_weak_none():
+    r = Retriever()
+    assert r._meta_score("", "作者简介：周一南") == 1.0
+    assert r._meta_score("", "这是版权页与ISBN信息") == 1.0
+    assert r._meta_score("", "序言部分内容") == 0.5
+    assert r._meta_score("", "普通正文内容") == 0.0
+
+
 def _patch_deps(monkeypatch, hits):
     """替换 embedder 与 milvus_client，返回固定检索结果"""
     fake_embedder = SimpleNamespace(

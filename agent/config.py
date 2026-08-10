@@ -29,10 +29,15 @@ class Settings(BaseSettings):
     rerank_top_k: int = 3
     min_score: float = 0.35
     # 有效来源判定阈值（基于未稀释的向量余弦分 vector_score）
-    source_threshold: float = 0.62
+    source_threshold: float = 0.55
     # 分块：按 token 估算（中文 1.5 token/字、英文 0.25 token/字符），对齐 embedding 模型上限
     chunk_tokens: int = 450
     chunk_overlap_tokens: int = 60
+    # 语义分块：用 BGE 相邻句相似度找语义边界（低于阈值断开）；关闭时回退纯结构分块
+    semantic_chunking: bool = True
+    semantic_chunk_threshold: float = 0.45
+    # 检索关键词召回：选知识库时对分块做精确词扫描，补足向量检索对专名的召回不足
+    keyword_recall: bool = True
     # 入库 QA 增强（默认关闭：原文分块入库，保真可溯源；开启后每个分块额外生成问答对）
     ingest_qa_enabled: bool = False
 
@@ -83,6 +88,10 @@ class Settings(BaseSettings):
 
     # url_fetch 工具域名白名单（空 = 禁用该工具；子域名自动匹配）。
     url_fetch_allowlist: list[str] = []
+    # web_extract 爬虫域名白名单（空 = 回退 url_fetch 白名单；两者都空则禁用）
+    crawl_allowlist: list[str] = []
+    # 文档提取类技能（docx/xlsx/pptx/pdf）允许访问的目录（相对 agent 运行目录）
+    file_access_dirs: list[str] = ["data"]
 
     # 上传体积上限（MB）：PDF/图片 base64 超过即拒绝
     max_upload_mb: int = 100

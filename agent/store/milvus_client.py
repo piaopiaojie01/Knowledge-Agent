@@ -15,8 +15,9 @@ def _create_schema() -> CollectionSchema:
         FieldSchema(name="doc_id", dtype=DataType.INT64),
         FieldSchema(name="kb_name", dtype=DataType.VARCHAR, max_length=256),
         FieldSchema(name="title", dtype=DataType.VARCHAR, max_length=512),
-        FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=4096),
-        FieldSchema(name="source_content", dtype=DataType.VARCHAR, max_length=4096),
+        # 4096 按 UTF-8 字节计，中文约 1300 字/块；目录等元信息块可达 2000+ 字，扩到 8192
+        FieldSchema(name="content", dtype=DataType.VARCHAR, max_length=8192),
+        FieldSchema(name="source_content", dtype=DataType.VARCHAR, max_length=8192),
         FieldSchema(name="keywords", dtype=DataType.VARCHAR, max_length=512),
         FieldSchema(name="embedding", dtype=DataType.FLOAT_VECTOR, dim=DIM),
     ], description="KA docs")

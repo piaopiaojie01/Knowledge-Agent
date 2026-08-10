@@ -197,3 +197,38 @@ def test_generate_captures_cache_usage(gen):
 
     assert gen.last_cache_hit == 120
     assert gen.last_cache_miss == 80
+
+
+def test_prepare_messages_kb_mode_forbids_common_sense(gen):
+    _, _, _, msg = gen._prepare_messages("问题", [], kb_mode=True)
+    assert "不要编造" in msg
+    assert "基于常识" not in msg
+
+
+def test_prepare_messages_chat_mode_allows_common_sense(gen):
+    _, _, _, msg = gen._prepare_messages("问题", [], kb_mode=False)
+    assert "基于常识" in msg
+
+
+def test_generate_kb_mode_low_score_annotation(gen):
+    low = [{"vector_score": 0.3, "title": "t", "content": "c"}]
+
+    def create(**k):
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content="未找到相关信息", tool_calls=None))],
+            usage=None)
+
+    gen.client = _make_client(create)
+    answer, _, _ = gen.generate("问题", low, kb_mode=True)
+    assert "知识库中未找到足够相关的资料" in answer
+
+
+def test_generate_chat_mode_no_annotation(gen):
+    def create(**k):
+        return SimpleNamespace(choices=[SimpleNamespace(
+            message=SimpleNamespace(content="常识回答", tool_calls=None))],
+            usage=None)
+
+    gen.client = _make_client(create)
+    answer, _, _ = gen.generate("问题", [{"vector_score": 0.3, "title": "t", "content": "c"}], kb_mode=False)
+    assert answer == "常识回答"

@@ -30,3 +30,9 @@ pymupdf>=1.23.0
 easyocr>=1.7.0
 # MCP 工具调用（管理后台配置 MCP 服务器后生效；未安装时自动降级禁用）
 mcp>=1.0
+# 网页正文提取（web_extract 技能，Apache-2.0）
+trafilatura>=1.8
+# 二维码生成（qr_generate 技能，MIT）
+qrcode>=7.4
+# Prometheus 指标（/metrics 端点，Apache-2.0）
+prometheus-client>=0.20

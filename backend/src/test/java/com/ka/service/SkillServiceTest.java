@@ -17,6 +17,7 @@ import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /** 技能管理：内置清单种子、启用状态切换、启用名单下发 */
@@ -37,6 +38,7 @@ class SkillServiceTest {
     @Test
     void ensureSeeded_首次访问写入内置技能清单() {
         List<Skill> seeded = new ArrayList<>();
+        when(repo.findByName(anyString())).thenReturn(Optional.empty());
         when(repo.findAll()).thenReturn(List.of(), seeded);
         when(repo.save(any(Skill.class))).thenAnswer(inv -> {
             Skill s = inv.getArgument(0);
@@ -46,8 +48,23 @@ class SkillServiceTest {
 
         service.ensureSeeded();
 
-        assertEquals(12, seeded.size());
+        assertEquals(32, seeded.size());
         assertTrue(seeded.stream().anyMatch(s -> "make_chart".equals(s.getName())));
+        assertTrue(seeded.stream().anyMatch(s -> "barcode_lookup".equals(s.getName())));
+        assertTrue(seeded.stream().anyMatch(s -> "make_table".equals(s.getName())));
+        assertTrue(seeded.stream().anyMatch(s -> "web_extract".equals(s.getName())));
+        assertTrue(seeded.stream().anyMatch(s -> "docx_extract".equals(s.getName())));
+        assertTrue(seeded.stream().anyMatch(s -> "today_hot".equals(s.getName())));
+    }
+
+    @Test
+    void ensureSeeded_已有技能不重复补种() {
+        when(repo.findByName(anyString())).thenAnswer(
+                inv -> Optional.of(Skill.builder().name(inv.getArgument(0)).build()));
+
+        service.ensureSeeded();
+
+        verify(repo, never()).save(any(Skill.class));
     }
 
     @Test

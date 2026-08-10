@@ -153,15 +153,20 @@ def _do_ingest(req: IngestRequest, qa_lo: int = 0, qa_hi: int = 85):
             _set_task(doc_id, {"status": "failed", "message": "未能从文档中提取到有效文本内容"}); return
 
         total = len(qa_pairs); inserted = 0
+        # 防御：任何分块超过 Milvus 上限都截断并告警（正常不应触发）
+        for q in qa_pairs:
+            c = q.get("content") or ""
+            if len(c) > 3800:
+                logger.error("分块超长(截断): len=%s prefix=%s", len(c), c[:80].replace("\n", " "))
         _set_progress(doc_id, qa_hi, "向量化 + 入库...", total, 0)
         for i in range(0, total, 10):
             batch = qa_pairs[i:i+10]
             texts = [f"{q['title']}\n{q['content']}" for q in batch]
             embs = embedder.encode_documents(texts)
-            rows = [{"doc_id": doc_id, "kb_name": req.kb_name,
-                     "title": q["title"], "content": q["content"],
-                     "source_content": q.get("source_content", ""),
-                     "keywords": q.get("keywords", ""),
+            rows = [{"doc_id": doc_id, "kb_name": req.kb_name[:200],
+                     "title": q["title"][:500], "content": q["content"][:2400],
+                     "source_content": (q.get("source_content") or "")[:2400],
+                     "keywords": (q.get("keywords") or "")[:500],
                      "embedding": e.tolist()}
                     for q, e in zip(batch, embs)]
             inserted += milvus_client.insert(rows)
@@ -420,3 +425,73 @@ def _ocr_image(img_bytes: bytes, device: str | None = None) -> str:
     reader = _get_ocr(device)
     results = reader.readtext(img_bytes, detail=0)
     return "\n".join(results)
+
+
+# ═════════════════════════════════════════
+# Excel 入库（.xlsx → 工作表转 Markdown → 分块向量化）
+# ═════════════════════════════════════════
+
+
+def _excel_to_markdown(data: bytes) -> str:
+    """Excel → Markdown 表格文本（每 sheet 一个 ## 区块，单元格截断防超长）"""
+    import io
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    parts = []
+    try:
+        for ws in wb.worksheets:
+            rows = []
+            for i, row in enumerate(ws.iter_rows(values_only=True)):
+                if i >= 500:
+                    break
+                vals = [("" if v is None else str(v))[:100] for v in row]
+                if any(v.strip() for v in vals):
+                    rows.append(vals)
+            if not rows:
+                continue
+            header = rows[0]
+            esc = lambda c: c.replace("|", "\\|")
+            parts.append(f"## {ws.title}")
+            parts.append("| " + " | ".join(esc(h) for h in header) + " |")
+            parts.append("| " + " | ".join("---" for _ in header) + " |")
+            for r in rows[1:]:
+                parts.append("| " + " | ".join(esc(c) for c in r) + " |")
+    finally:
+        wb.close()
+    return "\n".join(parts)
+
+
+def _do_ingest_excel(req: PdfUpload):
+    """后台线程：Excel 解析 → 分块 → 向量化入库"""
+    doc_id = req.doc_id
+    _set_progress(doc_id, 5, "Excel 解析中...")
+    try:
+        data = base64.b64decode(req.pdf_base64)
+        text = _excel_to_markdown(data)
+    except Exception as e:
+        _set_task(doc_id, {"status": "failed", "message": f"Excel error: {e}"})
+        return
+    if not text.strip():
+        _set_task(doc_id, {"status": "failed", "message": "Excel 未解析到有效内容"})
+        return
+    ir = IngestRequest(doc_id=doc_id, title=req.title, kb_name=req.kb_name, content=text)
+    _do_ingest(ir, qa_lo=5)
+
+
+@router.post("/ingest-excel")
+async def ingest_excel(req: PdfUpload):
+    """Excel 入库：同步解析一次返回内容预览（供后端全文搜索/展示），后台线程做分块+向量化"""
+    if not milvus_client.is_connected:
+        raise HTTPException(status_code=503)
+    _validate_pdf_upload(req)
+    try:
+        data = base64.b64decode(req.pdf_base64)
+        preview = _excel_to_markdown(data)[:2000]
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Excel 解析失败: {e}")
+    if not preview.strip():
+        raise HTTPException(status_code=400, detail="Excel 未解析到有效内容")
+    if not _try_start_task(req.doc_id, _do_ingest_excel, (req,)):
+        return {"success": True, "doc_id": req.doc_id, "status": "already_processing"}
+    return {"success": True, "doc_id": req.doc_id, "status": "processing",
+            "content_preview": preview}

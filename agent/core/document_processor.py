@@ -83,9 +83,7 @@ def _heading_prefix(headings) -> str:
 
 def _split_long_unit(content: str, lang: str, chunk_tokens: int, overlap_tokens: int) -> List[str]:
     """超长单元：按句子组装 + 相邻块重叠；单句仍超限按字符窗口硬切，不截断丢内容"""
-    sentences = [s.strip() for s in re.split(r'(?<=[。！？!?；;])\s*|\n+', content) if s.strip()]
-    if not sentences:
-        sentences = [content]
+    sentences = split_sentences(content)
     sep = " " if lang == "en" else "\n"
     result = []
     buf, buf_t = [], 0
@@ -124,24 +122,128 @@ def _split_long_unit(content: str, lang: str, chunk_tokens: int, overlap_tokens:
     return final
 
 
-def chunk_text(text: str, chunk_tokens: int | None = None,
-               overlap_tokens: int | None = None) -> List[str]:
-    """原文分块（中英自适应）：
-    - 按 token 估算对齐 embedding 模型上限（默认 450 token）
-    - 保留父标题链上下文；超长段落按句/窗口二次拆分并重叠，不截断丢内容
-    """
-    chunk_tokens = chunk_tokens or settings.chunk_tokens
-    overlap_tokens = overlap_tokens or settings.chunk_overlap_tokens
+def split_sentences(text: str) -> List[str]:
+    """中文/英文句子切分：按句末标点与换行，过滤空串"""
+    parts = re.split(r'(?<=[。！？!?；;])\s*|\n+', text)
+    return [p.strip() for p in parts if p.strip()]
 
+
+def _cosine(a, b) -> float:
+    import numpy as np
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    na, nb = np.linalg.norm(a), np.linalg.norm(b)
+    if na == 0 or nb == 0:
+        return 0.0
+    return float(np.dot(a, b) / (na * nb))
+
+
+def _group_sentences_by_similarity(sentences, embeddings, threshold: float,
+                                   chunk_tokens: int) -> List[List[int]]:
+    """相邻句相似度断点的贪心分组（纯函数，便于测试）：
+    话题突变（相邻相似度 < threshold）或 token 超预算时断块"""
+    groups = []
+    cur = []
+    cur_tokens = 0
+    for i, s in enumerate(sentences):
+        t = estimate_tokens(s)
+        if cur and (cur_tokens + t > chunk_tokens
+                    or _cosine(embeddings[i], embeddings[i - 1]) < threshold):
+            groups.append(cur)
+            cur = []
+            cur_tokens = 0
+        cur.append(i)
+        cur_tokens += t
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+def _join_unit_lines(lines: List[str]) -> str:
+    """把单元内的短行合并为段落：PDF 提取文本常一行一断，直接按行切会产生微型分块。
+    表格/列表/标题/代码块等结构行保留换行；中文短行直接拼接，英文加空格。"""
+    out = []
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            out.append("")
+            continue
+        if s.startswith(("|", "- ", "* ", "#", "```", ">", "•", "1.", "2.", "3.")):
+            out.append(s)
+            continue
+        if out and out[-1] and len(out[-1]) < 80 and len(s) < 80:
+            out[-1] += s if detect_lang(s) == "zh" else " " + s
+        else:
+            out.append(s)
+    return "\n".join(out)
+
+
+def _is_toc(content: str) -> bool:
+    """判断是否为目录块：开头含「目录」且至少 2 个「第X章」。目录是完整语义单元，不能按 token 拆开"""
+    head = content[:200]
+    if "目录" not in head and "目  录" not in head:
+        return False
+    return len(re.findall(r'第[一二三四五六七八九十百\d]+章', content)) >= 2
+
+
+def _is_toc_unit(content: str) -> bool:
+    """目录或目录延续单元：整体由目录行组成（第X章 / 以：结尾的条目 / 心理测试 / 序言）。
+    PDF 提取的目录常被空行切成多段，需合并成完整目录。"""
+    if _is_toc(content):
+        return True
+    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    if len(lines) < 4:
+        return False
+    toc_like = sum(
+        1 for l in lines[:40]
+        if re.match(r'^第[一二三四五六七八九十百\d]+章', l)
+        or l.endswith('：') or l.endswith(':')
+        or l in ("心理测试", "序言", "后记"))
+    return toc_like >= max(3, int(len(lines) * 0.5))
+
+
+def _extract_toc(text: str) -> tuple:
+    """文本级提取目录区域：从「目录」标记到正文开头（第一个独立“第X章”+长正文句）。
+    返回 (toc_text, rest_text)；无目录时返回 (None, text)。"""
+    m = re.search(r'目\s*录', text[:4000])
+    if not m:
+        return None, text
+    start = m.start()
+    body = text[start:]
+    lines = body.splitlines()
+    end = len(body)
+    for i, ln in enumerate(lines):
+        if re.match(r'^\s*第[一二三四五六七八九十百\d]+章\s*$', ln) \
+                or re.match(r'^\s*第[一二三四五六七八九十百\d]+章\s+[^\s：:]{2,10}$', ln):
+            acc = ""
+            for j in range(i + 1, min(i + 10, len(lines))):
+                s = lines[j].strip()
+                if not s:
+                    continue
+                acc += s
+                if len(acc) >= 60:
+                    break
+            if len(acc) >= 60 and not acc.rstrip().endswith(('：', ':')):
+                end = sum(len(l) + 1 for l in lines[:i])
+                break
+    toc = body[:end]
+    if not toc.strip():
+        return None, text
+    return toc, text[:start] + body[end:]
+
+
+def _split_units(text: str) -> List[tuple]:
+    """按 Markdown 标题链切分单元，返回 [(headings, content)]"""
     units = []
     headings = []  # [(level, text)]
     buf = []
 
     def flush():
         if buf:
-            units.append((list(headings), "\n".join(buf).strip()))
+            units.append((list(headings), _join_unit_lines(buf).strip()))
             buf.clear()
 
+    unit_char_cap = 800  # 单元字符上限：防止 PDF 无空行文本合并成巨型单元
     for line in text.splitlines():
         s = line.strip()
         if not s:
@@ -155,9 +257,108 @@ def chunk_text(text: str, chunk_tokens: int | None = None,
             headings.append((level, m.group(2).strip()))
             continue
         buf.append(line)
+        if sum(len(l) for l in buf) >= unit_char_cap:
+            flush()
     flush()
     if not units:
         units = [([], text.strip())]
+    # 合并连续的目录/目录延续单元，保证完整目录不被拆散
+    merged = []
+    for headings, content in units:
+        if content and merged and _is_toc_unit(content) and _is_toc_unit(merged[-1][1]):
+            merged[-1] = (merged[-1][0], merged[-1][1] + "\n" + content)
+        else:
+            merged.append((headings, content))
+    units = merged
+    return units
+
+
+def semantic_chunk_text(text: str, chunk_tokens: int | None = None,
+                        overlap_tokens: int | None = None,
+                        threshold: float | None = None) -> List[str]:
+    """语义分块：标题强制边界 + 段内 BGE 相邻句相似度断点 + token 预算兜底。
+    embedding 不可用时自动回退纯结构分块（chunk_text）。"""
+    chunk_tokens = chunk_tokens or settings.chunk_tokens
+    overlap_tokens = overlap_tokens or settings.chunk_overlap_tokens
+    if threshold is None:
+        threshold = settings.semantic_chunk_threshold
+    try:
+        from embedding.bge_embedder import embedder
+    except Exception:
+        embedder = None
+
+    toc, text = _extract_toc(text)
+    chunks = []
+    for headings, content in _split_units(text):
+        if not content:
+            continue
+        lang = detect_lang(content)
+        prefix = _heading_prefix(headings)
+        if _is_toc(content):
+            chunk = (prefix + content).strip()
+            if chunk and len(chunk) <= 2400:
+                chunks.append(chunk)
+                continue
+        sentences = split_sentences(content)
+        if len(sentences) < 2 or embedder is None:
+            # 无法语义切分：预算内整块，超预算走结构兜底
+            pieces = ([content] if estimate_tokens(content, lang) <= chunk_tokens
+                      else _split_long_unit(content, lang, chunk_tokens, overlap_tokens))
+            for sub in pieces:
+                chunk = (prefix + sub).strip()
+                if chunk:
+                    chunks.append(chunk)
+            continue
+        try:
+            embeddings = embedder.encode_documents(sentences)
+        except Exception as e:
+            logger.warning("语义分块 embedding 失败，回退结构分块: %s", e)
+            embeddings = None
+        if embeddings is None or len(embeddings) != len(sentences):
+            for sub in (_split_long_unit(content, lang, chunk_tokens, overlap_tokens)
+                        if estimate_tokens(content, lang) > chunk_tokens else [content]):
+                chunk = (prefix + sub).strip()
+                if chunk:
+                    chunks.append(chunk)
+            continue
+        groups = _group_sentences_by_similarity(
+            sentences, embeddings, threshold, chunk_tokens)
+        sep = " " if lang == "en" else "\n"
+        for g in groups:
+            sub = sep.join(sentences[i] for i in g)
+            for piece in (_split_long_unit(sub, lang, chunk_tokens, overlap_tokens)
+                          if estimate_tokens(sub, lang) > chunk_tokens else [sub]):
+                chunk = (prefix + piece).strip()
+                if chunk:
+                    chunks.append(chunk)
+    # Milvus content 上限 4096 保护：字符超长块按窗口硬切（保留全部内容）
+    max_chars = 2400
+    capped = []
+    for c in chunks:
+        if len(c) <= max_chars:
+            capped.append(c)
+            continue
+        lang = detect_lang(c)
+        rate = 1.5 if lang == "zh" else 0.25
+        window = int(chunk_tokens / rate)
+        for i in range(0, len(c), window):
+            capped.append(c[i:i + window])
+    if toc:
+        capped.insert(0, toc.strip()[:2400])
+    return capped
+
+
+def chunk_text(text: str, chunk_tokens: int | None = None,
+               overlap_tokens: int | None = None) -> List[str]:
+    """原文分块（中英自适应）：
+    - 按 token 估算对齐 embedding 模型上限（默认 450 token）
+    - 保留父标题链上下文；超长段落按句/窗口二次拆分并重叠，不截断丢内容
+    """
+    chunk_tokens = chunk_tokens or settings.chunk_tokens
+    overlap_tokens = overlap_tokens or settings.chunk_overlap_tokens
+
+    toc, text = _extract_toc(text)
+    units = _split_units(text)
 
     chunks = []
     cur_headings = []
@@ -178,6 +379,11 @@ def chunk_text(text: str, chunk_tokens: int | None = None,
         if not content:
             continue
         lang = detect_lang(content)
+        if _is_toc(content):
+            chunk = (_heading_prefix(headings) + content).strip()
+            if chunk and len(chunk) <= 2400:
+                chunks.append(chunk)
+                continue
         unit_tokens = estimate_tokens(content, lang)
         prefix_tokens = estimate_tokens(_heading_prefix(headings), lang)
         if headings != cur_headings:
@@ -199,7 +405,7 @@ def chunk_text(text: str, chunk_tokens: int | None = None,
     finish()
 
     # Milvus content 字段上限 4096 的保护性硬切（保留全部内容）
-    max_chars = 3800
+    max_chars = 2400
     out = []
     for c in chunks:
         if len(c) <= max_chars:
@@ -210,6 +416,9 @@ def chunk_text(text: str, chunk_tokens: int | None = None,
         window = int(chunk_tokens / rate)
         for i in range(0, len(c), window):
             out.append(c[i:i + window])
+    if toc:
+        pieces = [toc[i:i + 2400] for i in range(0, len(toc), 2400)]
+        out = [p.strip() for p in pieces if p.strip()] + out
     return out
 
 
@@ -240,7 +449,11 @@ class DocumentProcessor:
     def process(self, text: str, title: str, progress_cb=None) -> List[Dict[str, Any]]:
         """主流程：原文分块（中英自适应）→ 入库行；
         KA_INGEST_QA_ENABLED=true 时额外生成问答对（默认关闭）。"""
-        chunks = chunk_text(text)
+        try:
+            chunks = semantic_chunk_text(text) if settings.semantic_chunking else chunk_text(text)
+        except Exception as e:
+            logger.warning("语义分块失败，回退结构分块: %s", e)
+            chunks = chunk_text(text)
         total = len(chunks)
         if not settings.ingest_qa_enabled or not settings.deepseek_api_key:
             rows = []

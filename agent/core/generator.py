@@ -74,6 +74,14 @@ SYSTEM_PROMPT = """你是一个知识库问答助手。回答规则：
 8. 当用户要求画图/生成图表/可视化数据时，必须调用 make_chart 工具；把工具返回的图片 HTML/URL 原样包含在回答中，不要省略或替换成文字描述
 9. 调用 web_search/wikipedia_lookup 工具后，必须引用工具返回的具体内容"""
 
+# 知识库严格模式：仅当用户选择了知识库时启用，禁止常识兜底与编造
+KB_STRICT_SUFFIX = """
+【知识库严格模式（当前已启用）】
+- 只允许基于上面注入的参考资料回答，引用时标注 [文档N]
+- 参考资料不足或无关时，必须如实回答"知识库中暂无相关信息"
+- 禁止编造知识库中不存在的事实、数字或结论，禁止用自己的知识补充
+"""
+
 
 def _is_chart_request(query: str) -> bool:
     """判断用户是否要求画图"""
@@ -164,7 +172,8 @@ class Generator:
     def _prepare_messages(self, query: str, sources: List[Dict[str, Any]],
                           history: List[Dict[str, str]] = None,
                           long_term_memory: str = "",
-                          chart_allowed: bool = True) -> Tuple[list, int, str, str]:
+                          chart_allowed: bool = True,
+                          kb_mode: bool = False) -> Tuple[list, int, str, str]:
         """构建发送给 LLM 的消息（generate / generate_stream 共用）
 
         返回 (messages, input_tokens, chart_result, user_message)
@@ -180,7 +189,11 @@ class Generator:
                     f"内容: {doc.get('content', '')}\n")
             user_message = f"参考资料：\n{chr(10).join(['---'] + context_parts)}\n用户问题：{query}\n请根据参考资料回答。"
         else:
-            user_message = f"用户问题：{query}\n（知识库中未找到高质量参考资料，请基于常识详细回答）"
+            user_message = (
+                f"用户问题：{query}\n（知识库中未找到相关参考资料，"
+                "请如实告知“知识库中暂无相关信息”，不要编造或使用自己的知识补充）"
+                if kb_mode
+                else f"用户问题：{query}\n（知识库中未找到高质量参考资料，请基于常识详细回答）")
 
         # ── 图表前置生成（模拟 tool call 注入，LLM 感知为"自己调的工具"）──
         chart_result = ""
@@ -196,6 +209,8 @@ class Generator:
 
         # 构建对话消息（智能窗口 + 自动压缩）
         sys_content = SYSTEM_PROMPT
+        if kb_mode:
+            sys_content += KB_STRICT_SUFFIX
         if long_term_memory:
             sys_content += "\n\n" + long_term_memory
         messages = build_messages(
@@ -228,7 +243,8 @@ class Generator:
                  stream: bool = False,
                  llm_config=None,
                  skill_names=None,
-                 mcp_servers=None) -> Tuple[str, int, int]:
+                 mcp_servers=None,
+                 kb_mode: bool = False) -> Tuple[str, int, int]:
         eff = _effective_llm(llm_config)
         if not eff["api_key"]:
             return self._mock_generate(query, sources), 0, 0
@@ -238,7 +254,7 @@ class Generator:
         chart_allowed = (skill_names is None) or ("make_chart" in skill_names)
 
         messages, input_tokens, chart_result, user_message = self._prepare_messages(
-            query, sources, history, long_term_memory, chart_allowed)
+            query, sources, history, long_term_memory, chart_allowed, kb_mode)
 
         try:
             # ── Tool Calling 循环（最多 5 轮）──
@@ -308,6 +324,16 @@ class Generator:
                 if _is_chart_request(query) and not chart_generated and "<img" not in answer and "![" not in answer:
                     answer = (answer or "") + "\n\n⚠️ 图表生成未成功，请尝试更具体的描述（如：柱状图 北京300 上海500）。"
                 output_tokens = count_tokens(answer)
+                # 知识库严格模式：低相关度时补充透明标注；有来源但未引用时提示谨慎
+                if kb_mode:
+                    best_score = max(
+                        (s.get("vector_score", s.get("score", 0)) for s in sources or []), default=0)
+                    if best_score < settings.source_threshold:
+                        answer = (answer or "") + (
+                            f"\n\n> ℹ️ 知识库中未找到足够相关的资料"
+                            f"（相关度 {best_score:.2f}，低于阈值 {settings.source_threshold}）。")
+                    elif sources and "[文档" not in (answer or ""):
+                        answer = (answer or "") + "\n\n> ⚠️ 本回答未标注引用来源，请谨慎核实。"
                 return answer, input_tokens, output_tokens
             # 5 轮工具调用耗尽：再做一次不带 tools 的调用，让 LLM 基于已有工具结果直接作答
             try:
@@ -331,7 +357,8 @@ class Generator:
                         long_term_memory: str = "",
                         llm_config=None,
                         skill_names=None,
-                        mcp_servers=None) -> Iterator[str]:
+                        mcp_servers=None,
+                        kb_mode: bool = False) -> Iterator[str]:
         """流式生成回答，逐块 yield 文本增量；支持流式工具调用（skills / MCP）
 
         - 图表预生成成功 → 模拟 tool call 已在 messages 里，LLM 正常引用
@@ -348,7 +375,7 @@ class Generator:
         chart_allowed = (skill_names is None) or ("make_chart" in skill_names)
 
         messages, input_tokens, chart_result, _ = self._prepare_messages(
-            query, sources, history, long_term_memory, chart_allowed)
+            query, sources, history, long_term_memory, chart_allowed, kb_mode)
         # 与非流式 generate 同口径：全量 messages 的 token 数，供路由层 final 事件使用
         self.last_input_tokens = input_tokens
 
@@ -407,6 +434,13 @@ class Generator:
                     if usage is not None:
                         self._apply_usage(usage)
                 if not had_tool_calls:
+                    # 知识库严格模式：低相关度时在流末尾补充透明标注
+                    if kb_mode:
+                        best_score = max(
+                            (s.get("vector_score", s.get("score", 0)) for s in sources or []), default=0)
+                        if best_score < settings.source_threshold:
+                            yield (f"\n\n> ℹ️ 知识库中未找到足够相关的资料"
+                                   f"（相关度 {best_score:.2f}，低于阈值 {settings.source_threshold}）。")
                     return  # 正常流式完成
                 # 流式工具调用：执行并把结果追加到消息，下一轮继续流式
                 assistant_calls = [

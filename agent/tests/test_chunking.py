@@ -2,7 +2,9 @@
 import pytest
 
 from config import settings
-from core.document_processor import DocumentProcessor, chunk_text
+from core.document_processor import (
+    DocumentProcessor, chunk_text, semantic_chunk_text,
+    split_sentences, _group_sentences_by_similarity, _join_unit_lines, _is_toc)
 from core.text_utils import detect_lang, estimate_tokens, normalize_words
 
 
@@ -80,6 +82,106 @@ def test_chunk_tokens_within_limit():
     chunks = chunk_text(text)
     for c in chunks:
         assert estimate_tokens(c) <= settings.chunk_tokens + 80  # 标题前缀与重叠留余量
+
+
+# ── 语义分块 ──
+
+
+def test_split_sentences_zh():
+    s = split_sentences("第一句。第二句！第三句？\n换行句。")
+    assert len(s) == 4
+    assert any(x.startswith("第一句") for x in s)
+    assert any(x.startswith("换行句") for x in s)
+
+
+def test_join_unit_lines_merges_short_prose_keeps_tables():
+    lines = [
+        "作者简介",
+        "周一南，袓籍安徽，毕业于福建仰恩大学，现居北京。",
+        "| 产品 | 销量 |",
+        "| 苹果 | 100 |",
+        "一位热爱文学、潜心研究中外经典作品的学者。",
+    ]
+    out = _join_unit_lines(lines)
+    assert "作者简介周一南" in out
+    assert "| 产品 | 销量 |" in out
+    assert "\n| 苹果 | 100 |" in out
+
+
+def test_is_toc_detects():
+    assert _is_toc("目  录序言第一章 欲望长啥样第二章 透视欲望第三章 读懂人心")
+    assert not _is_toc("这是普通正文，没有目录结构。")
+
+
+def test_chunk_text_keeps_toc_whole():
+    toc = ("目  录\n序言\n第一章 欲望长啥样：练就火眼金睛，让隐藏的欲望无所遁形\n"
+           "相由心生：相貌不等于心态，但能反映心态\n"
+           "第二章 透视欲望：做交际场上的太阳，吸引别人围着自己转\n"
+           "感觉剥夺实验：交际能力与个人成就有着密不可分的关系\n"
+           "第三章 洞察他人：读懂行为背后的欲望密码\n"
+           "第四章 掌控欲望：让欲望成为你的助力")
+    chunks = chunk_text(toc, chunk_tokens=10, overlap_tokens=2)
+    joined = "\n".join(chunks)
+    assert "第三章" in joined and "第四章" in joined
+    assert len(chunks) == 1
+
+
+def test_split_units_merges_toc_continuations():
+    from core.document_processor import _split_units
+    text = (
+        "目  录\n序言\n第一章 欲望长啥样\n相由心生：相貌不等于心态，但能反映心态\n"
+        "\n"
+        "刺猬法则：因为关系好，你就能侵占我的空间吗\n"
+        "暗示效应：用心理暗示诱导人心\n"
+        "尊重对方：渴望金钱，更渴望获得尊重\n"
+        "多看效应：频繁露面，只为留下更深的印象\n"
+        "心理测试\n"
+        "第三章 掌控欲望\n情绪定律：不懂什么叫理性的人，才会说自己理性\n"
+        "野马结局：被人激怒，尽力克制发泄怒火的欲望\n"
+        "\n"
+        "第一章\n欲望长啥样\n说到欲望，很多人的第一反应都是十分深奥难以琢磨。")
+    units = _split_units(text)
+    joined = "\n".join(c for _, c in units)
+    assert "第三章" in joined and "刺猬法则" in joined
+    assert "说到欲望" in joined
+
+
+def test_extract_toc_detects_range():
+    from core.document_processor import _extract_toc
+    text = ("前言……\n目  录\n序言\n第一章 标题：内容\n条目一：xxx\n第二章 标题：yyy\n心理测试\n"
+            "第一章\n正文标题\n这是正文的第一句话，这一段是较长的正文内容，"
+            "讲的是欲望心理学的基本概念和主要观点。\n继续补充正文内容，确保累计长度超过六十个字符。")
+    toc, rest = _extract_toc(text)
+    assert toc and "第一章" in toc and "第二章" in toc and "心理测试" in toc
+    assert "这是正文" in rest
+
+
+def test_group_sentences_breaks_on_topic_change():
+    emb = [[1, 0, 0], [0.9, 0.1, 0], [0.95, -0.1, 0], [0, 1, 0], [0, 0.9, 0.1]]
+    sentences = [f"s{i}" for i in range(5)]
+    groups = _group_sentences_by_similarity(sentences, emb, 0.5, 1000)
+    assert groups == [[0, 1, 2], [3, 4]]
+
+
+def test_semantic_chunk_text_splits_topic_boundary(monkeypatch):
+    text = ("苹果种植需要充足光照与水分。果树修剪能提高产量。"
+            "冷链物流要求全程温控。仓储管理涉及库存周转。")
+
+    class FakeEmbedder:
+        def encode_documents(self, sentences):
+            return [[1, 0, 0], [0.92, 0.1, 0], [0, 1, 0], [0.05, 0.95, 0]]
+
+    monkeypatch.setattr("embedding.bge_embedder.embedder", FakeEmbedder())
+    chunks = semantic_chunk_text(text, chunk_tokens=60, overlap_tokens=20, threshold=0.5)
+    assert len(chunks) == 2
+    assert "苹果种植" in chunks[0] and "冷链物流" in chunks[1]
+
+
+def test_semantic_chunk_text_fallback_without_embedder(monkeypatch):
+    monkeypatch.setattr("embedding.bge_embedder.embedder", None)
+    chunks = semantic_chunk_text("第一句。第二句。" * 40, chunk_tokens=200,
+                                 overlap_tokens=20, threshold=0.5)
+    assert chunks
 
 
 # ── 入库行 ──

@@ -112,3 +112,24 @@ def test_try_start_task_rejects_duplicate(monkeypatch, tmp_path):
     _use_tmp_db(monkeypatch, tmp_path)
     assert ir._try_start_task(42, lambda: None, ()) is True
     assert ir._try_start_task(42, lambda: None, ()) is False
+
+
+def test_excel_to_markdown_converts_sheets():
+    import io
+    import openpyxl
+    from api.ingest_routes import _excel_to_markdown
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "销售数据"
+    ws.append(["产品", "销量"])
+    ws.append(["苹果", 100])
+    ws.append(["香蕉", 200])
+    buf = io.BytesIO()
+    wb.save(buf)
+
+    md = _excel_to_markdown(buf.getvalue())
+
+    assert "## 销售数据" in md
+    assert "| 产品 | 销量 |" in md
+    assert "| 苹果 | 100 |" in md

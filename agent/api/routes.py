@@ -20,6 +20,7 @@ from core.memory import memory as long_term_memory
 from store.milvus_client import milvus_client
 from embedding.bge_embedder import embedder
 from config import settings
+from core.observability import llm_tokens, rag_query_seconds, rag_requests
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ async def rag_query(req: RagQueryRequest):
     4. LLM 生成回答 (DeepSeek)
     5. 提取长期记忆
     """
+    import time as _time
+    _t0 = _time.monotonic()
     try:
         sid = req.session_id or "default"
         # 同步文件 I/O 挪到线程，避免阻塞事件循环
@@ -90,9 +93,10 @@ async def rag_query(req: RagQueryRequest):
 
         # 4. 生成回答（含长期记忆上下文）
         history = [h.model_dump() for h in req.history] if req.history else None
+        kb_mode = bool(req.kb_names)
         answer, input_tokens, output_tokens = await asyncio.to_thread(
             generator.generate, req.question, reranked_docs, history, ltm_context,
-            False, req.llm_config, req.skills, req.mcp_servers)
+            False, req.llm_config, req.skills, req.mcp_servers, kb_mode)
 
         # 5. 异步提取长期记忆（不阻塞响应）
         def _extract():
@@ -112,6 +116,10 @@ async def rag_query(req: RagQueryRequest):
         sources = _build_sources(reranked_docs)
 
         metrics = {"total_in_kb": total_in_kb, "retrieved": len(docs), "after_rerank": len(reranked_docs), "best_score": round(best_retrieved, 4), "min_threshold": settings.min_score, "source_threshold": settings.source_threshold}
+        rag_query_seconds.observe(_time.monotonic() - _t0)
+        rag_requests.labels(result="success").inc()
+        llm_tokens.labels(type="input").inc(input_tokens)
+        llm_tokens.labels(type="output").inc(output_tokens)
         return RagQueryResponse(
             answer=answer, sources=sources, metrics=metrics,
             input_tokens=input_tokens, output_tokens=output_tokens,
@@ -119,6 +127,8 @@ async def rag_query(req: RagQueryRequest):
             cache_miss_tokens=generator.last_cache_miss)
 
     except Exception as e:
+        rag_query_seconds.observe(_time.monotonic() - _t0)
+        rag_requests.labels(result="error").inc()
         logger.error(f"RAG 查询失败: {e}", exc_info=True)
         # P0：不向客户端透传内部异常细节，完整堆栈留在服务端日志
         raise HTTPException(status_code=500, detail="RAG 查询失败，请稍后重试")
@@ -157,7 +167,7 @@ async def rag_query_stream(req: RagQueryRequest):
         try:
             for delta in generator.generate_stream(
                     req.question, reranked_docs, history, ltm_context,
-                    req.llm_config, req.skills, req.mcp_servers):
+                    req.llm_config, req.skills, req.mcp_servers, bool(req.kb_names)):
                 full_answer += delta
                 yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
             # 与非流式同口径：generate_stream 内部按全量 messages 统计（history 已含其中，勿重复加）
