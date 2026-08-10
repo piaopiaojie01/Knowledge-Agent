@@ -4,6 +4,7 @@ import com.ka.dto.KnowledgeBaseDTO;
 import com.ka.entity.KnowledgeBase;
 import com.ka.repository.KnowledgeBaseRepository;
 import com.ka.repository.PermissionRepository;
+import com.ka.config.SecurityUtils;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -18,6 +19,10 @@ public class KnowledgeBaseService {
     private final PermissionRepository permissionRepository;
 
     public List<KnowledgeBaseDTO> listAccessible(Long userId) {
+        // 全局管理员可见全部知识库，便于统一管理
+        if (SecurityUtils.isAdmin()) {
+            return kbRepository.findAll().stream().map(this::toDTO).collect(Collectors.toList());
+        }
         List<KnowledgeBase> kbs = kbRepository.findAccessibleByUser(userId);
         return kbs.stream().map(this::toDTO).collect(Collectors.toList());
     }
@@ -27,7 +32,7 @@ public class KnowledgeBaseService {
                 .orElseThrow(() -> new RuntimeException("知识库不存在"));
 
         // 检查权限
-        if (!kb.getIsPublic()) {
+        if (!kb.getIsPublic() && !SecurityUtils.isAdmin()) {
             boolean hasAccess = permissionRepository
                     .existsByUserIdAndKbIdAndPermissionTypeIn(userId, kbId,
                             List.of("READ", "WRITE", "ADMIN"));

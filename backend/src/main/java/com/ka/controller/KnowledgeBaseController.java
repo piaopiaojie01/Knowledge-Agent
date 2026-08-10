@@ -63,7 +63,8 @@ public class KnowledgeBaseController {
     public ApiResponse<KnowledgeBaseDTO> update(@PathVariable Long id,
                                                 @RequestBody Map<String, Object> body) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (!permissionRepository.existsByUserIdAndKbIdAndPermissionTypeIn(userId, id, List.of("ADMIN")))
+        if (!SecurityUtils.isAdmin()
+                && !permissionRepository.existsByUserIdAndKbIdAndPermissionTypeIn(userId, id, List.of("ADMIN")))
             return ApiResponse.error(403, "无权限编辑此知识库");
 
         KnowledgeBase kb = kbRepository.findById(id)
@@ -87,7 +88,8 @@ public class KnowledgeBaseController {
     @DeleteMapping("/{id}")
     public ApiResponse<Void> delete(@PathVariable Long id) {
         Long userId = SecurityUtils.getCurrentUserId();
-        if (!permissionRepository.existsByUserIdAndKbIdAndPermissionTypeIn(userId, id, List.of("ADMIN")))
+        if (!SecurityUtils.isAdmin()
+                && !permissionRepository.existsByUserIdAndKbIdAndPermissionTypeIn(userId, id, List.of("ADMIN")))
             return ApiResponse.error(403, "无权限删除此知识库");
 
         KnowledgeBase kb = kbRepository.findById(id).orElseThrow(() -> new RuntimeException("知识库不存在"));

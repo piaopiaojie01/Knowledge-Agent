@@ -6,7 +6,9 @@ import com.ka.dto.LoginRequest;
 import com.ka.dto.LoginResponse;
 import com.ka.entity.User;
 import com.ka.repository.KnowledgeBaseRepository;
+import com.ka.repository.PermissionRepository;
 import com.ka.repository.UserRepository;
+import io.jsonwebtoken.Claims;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -15,6 +17,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
 import java.util.Optional;
+import java.util.Date;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -30,6 +33,8 @@ class AuthServiceTest {
     @Mock private KnowledgeBaseRepository knowledgeBaseRepository;
     @Mock private PasswordEncoder passwordEncoder;
     @Mock private JwtUtil jwtUtil;
+    @Mock private JwtBlacklistService jwtBlacklistService;
+    @Mock private PermissionRepository permissionRepository;
 
     private AuthService authService;
 
@@ -37,7 +42,8 @@ class AuthServiceTest {
     void setUp() {
         lenient().when(constants.getLoginMaxFailures()).thenReturn(5);
         when(constants.getLoginLockMinutes()).thenReturn(30);
-        authService = new AuthService(constants, userRepository, knowledgeBaseRepository, passwordEncoder, jwtUtil);
+        authService = new AuthService(constants, userRepository, knowledgeBaseRepository,
+                passwordEncoder, jwtUtil, jwtBlacklistService, permissionRepository);
     }
 
     private LoginRequest req(String u, String p) {
@@ -54,10 +60,15 @@ class AuthServiceTest {
         when(userRepository.findByUsername("admin")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("admin123", "hashed")).thenReturn(true);
         when(jwtUtil.generateToken(1L, "admin", "ADMIN")).thenReturn("jwt-token");
+        Claims claims = mock(Claims.class);
+        when(claims.getId()).thenReturn("jti-1");
+        when(claims.getExpiration()).thenReturn(new Date(System.currentTimeMillis() + 3600_000));
+        when(jwtUtil.parseToken("jwt-token")).thenReturn(claims);
 
         LoginResponse resp = authService.login(req("admin", "admin123"));
         assertEquals("admin", resp.getUsername());
         assertEquals("jwt-token", resp.getToken());
+        verify(jwtBlacklistService).registerToken(eq(1L), eq("jti-1"), anyLong());
     }
 
     @Test

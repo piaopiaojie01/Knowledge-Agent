@@ -19,4 +19,12 @@ public class SecurityUtils {
         }
         throw new RuntimeException("未登录或 Token 无效");
     }
+
+    /** 当前用户是否为全局管理员（ROLE_ADMIN） */
+    public static boolean isAdmin() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null) return false;
+        return auth.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()));
+    }
 }

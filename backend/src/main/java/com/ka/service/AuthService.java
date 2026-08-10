@@ -6,7 +6,9 @@ import com.ka.dto.LoginRequest;
 import com.ka.dto.LoginResponse;
 import com.ka.entity.User;
 import com.ka.repository.KnowledgeBaseRepository;
+import com.ka.repository.PermissionRepository;
 import com.ka.repository.UserRepository;
+import com.ka.service.JwtBlacklistService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -26,6 +28,8 @@ public class AuthService {
     private final KnowledgeBaseRepository knowledgeBaseRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
+    private final JwtBlacklistService jwtBlacklistService;
+    private final PermissionRepository permissionRepository;
 
     private static final Map<String, FailRecord> loginFailures = new ConcurrentHashMap<>();
 
@@ -48,6 +52,10 @@ public class AuthService {
         if (!user.getIsActive()) throw new RuntimeException("账户已被禁用");
         loginFailures.remove(username);
         String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRole());
+        // 登记 user → jti，支持管理员强制登出
+        var claims = jwtUtil.parseToken(token);
+        long ttlSeconds = (claims.getExpiration().getTime() - System.currentTimeMillis()) / 1000;
+        jwtBlacklistService.registerToken(user.getId(), claims.getId(), ttlSeconds);
         return new LoginResponse(token, "Bearer", user.getId(), user.getUsername(),
                 user.getDisplayName(), user.getRole(), user.getStorageUsed(), user.getStorageLimit());
     }
@@ -69,6 +77,49 @@ public class AuthService {
         userRepository.save(User.builder().username(name).passwordHash(passwordEncoder.encode(pw)).role("USER").build());
     }
 
+    /** 管理员启用/禁用用户（操作人 + 目标用户 + 目标状态） */
+    public void setUserActive(Long operatorId, Long targetId, boolean active) {
+        User user = userRepository.findById(targetId)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        if (!active && targetId.equals(operatorId)) {
+            throw new RuntimeException("不能禁用当前登录账户");
+        }
+        if (!active && "ADMIN".equals(user.getRole())) {
+            long activeAdmins = userRepository.findAll().stream()
+                    .filter(u -> "ADMIN".equals(u.getRole()) && Boolean.TRUE.equals(u.getIsActive()))
+                    .count();
+            if (activeAdmins <= 1) {
+                throw new RuntimeException("不能禁用最后一个管理员");
+            }
+        }
+        user.setIsActive(active);
+        userRepository.save(user);
+        if (!active) {
+            // 禁用即强制登出，存量 token 立即失效
+            jwtBlacklistService.revokeAllForUser(targetId);
+        }
+    }
+
+    /** 管理员重置密码（重置后该用户全部会话强制登出） */
+    public void resetPassword(Long targetId, String newPassword) {
+        User user = userRepository.findById(targetId)
+                .orElseThrow(() -> new RuntimeException("用户不存在"));
+        if (newPassword == null || !PW_PATTERN.matcher(newPassword).matches()) {
+            throw new RuntimeException("密码需8位以上，且包含大小写字母、数字和特殊字符");
+        }
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+        jwtBlacklistService.revokeAllForUser(targetId);
+    }
+
+    /** 管理员强制登出：撤销该用户全部活跃 token */
+    public void forceLogout(Long targetId) {
+        if (!userRepository.existsById(targetId)) {
+            throw new RuntimeException("用户不存在");
+        }
+        jwtBlacklistService.revokeAllForUser(targetId);
+    }
+
     public void deleteUser(Long id) {
         User user = userRepository.findById(id)
                 .orElseThrow(() -> new RuntimeException("用户不存在"));
@@ -76,6 +127,9 @@ public class AuthService {
         if (!knowledgeBaseRepository.findByCreatedBy(id).isEmpty()) {
             throw new RuntimeException("该用户名下还有知识库，请先转移或删除后再删除用户");
         }
+        // 清理权限与活跃 token，避免孤儿数据
+        permissionRepository.deleteByUserId(id);
+        jwtBlacklistService.revokeAllForUser(id);
         userRepository.deleteById(id);
     }
 

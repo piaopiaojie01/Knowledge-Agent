@@ -8,6 +8,7 @@ import com.ka.service.NotificationService;
 import com.ka.service.AuditLogService;
 import com.ka.service.AuthService;
 import com.ka.service.JwtBlacklistService;
+import lombok.extern.slf4j.Slf4j;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/auth")
+@Slf4j
 @RequiredArgsConstructor
 public class AuthController {
 
@@ -72,6 +74,14 @@ public class AuthController {
                 return ApiResponse.error(401, "账户已被禁用");
             }
             String newToken = jwtUtil.refreshToken(oldToken);
+            // 登记新 token 到该用户的活跃索引（强制登出时一并撤销）
+            try {
+                var claims = jwtUtil.parseToken(newToken);
+                long ttlSeconds = (claims.getExpiration().getTime() - System.currentTimeMillis()) / 1000;
+                jwtBlacklistService.registerToken(userId, claims.getId(), ttlSeconds);
+            } catch (Exception e) {
+                log.warn("刷新后登记 token 失败: {}", e.getMessage());
+            }
             return ApiResponse.success(Map.of("token", newToken, "tokenType", "Bearer"));
         } catch (RuntimeException e) {
             return ApiResponse.error(401, e.getMessage());

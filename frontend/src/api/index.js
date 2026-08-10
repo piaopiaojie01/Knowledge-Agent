@@ -4,6 +4,11 @@ const api = axios.create({ baseURL: '/api' })
 
 const AUTH_KEYS = ['ka_token', 'ka_role', 'ka_username', 'ka_session']
 
+function genRequestId() {
+  return (crypto.randomUUID && crypto.randomUUID()) ||
+    'req-' + Date.now() + '-' + Math.random().toString(36).slice(2, 10)
+}
+
 function clearAuthAndReload() {
   AUTH_KEYS.forEach(k => localStorage.removeItem(k))
   window.location.reload()
@@ -29,6 +34,8 @@ async function refreshToken() {
 
 // 请求拦截：自动带 token
 api.interceptors.request.use(cfg => {
+  // 可观测性：透传请求 ID，便于后端/Agent 日志串联
+  cfg.headers['X-Request-Id'] = cfg.headers['X-Request-Id'] || genRequestId()
   const token = localStorage.getItem('ka_token')
   if (token) cfg.headers.Authorization = `Bearer ${token}`
   return cfg
@@ -82,6 +89,7 @@ export async function ragQueryStream(question, kbNames, history, sessionId, { on
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream',
+      'X-Request-Id': genRequestId(),
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     },
     body: JSON.stringify({ question, kbNames, history, sessionId })
@@ -149,8 +157,17 @@ export const getTokenStats = () => api.get('/conversation/stats')
 export const getAdminUsers = () => api.get('/admin/users')
 export const createUser = (u, p) => api.post('/admin/users', { username: u, password: p })
 export const deleteUser = (id) => api.delete(`/admin/users/${id}`)
+export const updateUserStatus = (id, isActive) => api.put(`/admin/users/${id}/status`, { isActive })
+export const resetUserPassword = (id, password) => api.put(`/admin/users/${id}/password`, { password })
+export const forceLogoutUser = (id) => api.post(`/admin/users/${id}/force-logout`)
 export const getAdminStats = () => api.get('/admin/stats')
 export const getAuditLog = () => api.get('/admin/audit')
+export const getAdminKbs = () => api.get('/admin/kbs')
+export const getAdminPerms = () => api.get('/admin/permissions')
+export const grantPermAdmin = (username, kbId, permissionType) =>
+  api.post('/admin/permissions/grant', { username, kbId, permissionType })
+export const revokePermAdmin = (username, kbId) =>
+  api.post('/admin/permissions/revoke', { username, kbId })
 export const getModelConfig = () => api.get('/admin/model-config')
 export const updateModelConfig = (payload) => api.put('/admin/model-config', payload)
 export const getCurrentModel = () => api.get('/model-config/current')

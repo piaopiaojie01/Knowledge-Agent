@@ -1,6 +1,8 @@
 package com.ka.config;
 
 import com.ka.service.JwtBlacklistService;
+import com.ka.entity.User;
+import com.ka.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -26,6 +28,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtUtil jwtUtil;
     private final JwtBlacklistService jwtBlacklistService;
     private final AppConstants constants;
+    private final UserRepository userRepository;
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -44,6 +47,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 }
             }
             Long userId = jwtUtil.getUserIdFromToken(token);
+            // 用户被禁用/删除后，存量 token 立即失效（无需等自然过期）
+            User user = userRepository.findById(userId).orElse(null);
+            if (user == null || !Boolean.TRUE.equals(user.getIsActive())) {
+                log.warn("拒绝非活跃用户的 token: userId={}", userId);
+                filterChain.doFilter(request, response);
+                return;
+            }
             String username = jwtUtil.getUsernameFromToken(token);
             String roleClaim = jwtUtil.parseToken(token).get("role", String.class);
             String role = "ROLE_" + (StringUtils.hasText(roleClaim) ? roleClaim : "USER");

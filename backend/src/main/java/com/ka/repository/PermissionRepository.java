@@ -17,4 +17,6 @@ public interface PermissionRepository extends JpaRepository<Permission, Long> {
     List<Permission> findByKbId(Long kbId);
 
     boolean existsByUserIdAndKbIdAndPermissionTypeIn(Long userId, Long kbId, List<String> permissionTypes);
+
+    void deleteByUserId(Long userId);
 }

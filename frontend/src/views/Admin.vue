@@ -57,14 +57,20 @@
         <div class="panel" style="padding:10px 0 4px">
           <div class="panel-title" style="padding:0 22px">用户列表</div>
           <table class="doc-table">
-            <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>用量</th><th></th></tr></thead>
+            <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>状态</th><th>用量</th><th>操作</th></tr></thead>
             <tbody>
               <tr v-for="u in users" :key="u.id">
                 <td>{{ u.id }}</td><td>{{ u.username }}</td><td>{{ u.role }}</td>
+                <td><span class="ntf-type" :class="{ up: u.isActive }">{{ u.isActive ? '启用' : '禁用' }}</span></td>
                 <td>{{ ((u.storageUsed || 0) / 1048576).toFixed(1) }} MB</td>
-                <td><span v-if="u.username !== 'admin'" class="icon-btn danger" @click="removeUser(u.id)">✕</span></td>
+                <td style="white-space:nowrap">
+                  <span v-if="u.username !== auth.username" class="btn-ghost btn-sm" @click="toggleUserStatus(u)">{{ u.isActive ? '禁用' : '启用' }}</span>
+                  <span v-if="u.username !== auth.username" class="btn-ghost btn-sm" @click="resetPw(u)">重置密码</span>
+                  <span v-if="u.username !== auth.username" class="btn-ghost btn-sm" @click="forceLogout(u)">强制登出</span>
+                  <span v-if="u.username !== auth.username" class="icon-btn danger" title="删除用户" @click="removeUser(u.id)">✕</span>
+                </td>
               </tr>
-              <tr v-if="!users.length"><td colspan="5"><div class="empty-state">暂无用户</div></td></tr>
+              <tr v-if="!users.length"><td colspan="6"><div class="empty-state">暂无用户</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -84,19 +90,20 @@
         <div class="panel" style="padding:10px 0 4px">
           <div class="panel-title" style="padding:0 22px">知识库列表</div>
           <table class="doc-table">
-            <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>可见性</th><th></th></tr></thead>
+            <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>可见性</th><th>操作</th></tr></thead>
             <tbody>
-              <tr v-for="k in kb.kbs" :key="k.id">
+              <tr v-for="k in adminKbs" :key="k.id">
                 <td>{{ k.id }}</td>
                 <td>{{ k.name }}</td>
                 <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ k.description || '—' }}</td>
                 <td>{{ k.isPublic ? '公开' : '私有' }}</td>
                 <td>
+                  <span class="btn-ghost btn-sm" @click="togglePublic(k)">{{ k.isPublic ? '设为私有' : '设为公开' }}</span>
                   <span class="btn-ghost btn-sm" @click="openDocs(k)">文档</span>
                   <span class="icon-btn danger" title="删除知识库" @click="removeKb(k)">✕</span>
                 </td>
               </tr>
-              <tr v-if="!kb.kbs.length"><td colspan="5"><div class="empty-state">暂无知识库</div></td></tr>
+              <tr v-if="!adminKbs.length"><td colspan="5"><div class="empty-state">暂无知识库</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -109,7 +116,7 @@
           <div class="panel-title">选择知识库</div>
           <select v-model="docsKbId" class="select" style="padding:10px;min-width:220px" @change="loadDocs">
             <option value="" disabled>选择知识库</option>
-            <option v-for="k in kb.kbs" :key="k.id" :value="String(k.id)">{{ k.name }}</option>
+            <option v-for="k in adminKbs" :key="k.id" :value="String(k.id)">{{ k.name }}</option>
           </select>
         </div>
         <div class="panel" style="padding:10px 0 4px">
@@ -245,25 +252,99 @@
       <!-- ── 权限管理 ── -->
       <div v-if="tab === 'perm'">
         <h2 class="page-title">权限管理</h2>
+        <div class="panel" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <span class="btn-ghost btn-sm" :style="permMode === 'user' ? 'outline:1px solid var(--primary);color:var(--primary)' : ''"
+            @click="permMode = 'user'">按用户</span>
+          <span class="btn-ghost btn-sm" :style="permMode === 'kb' ? 'outline:1px solid var(--primary);color:var(--primary)' : ''"
+            @click="permMode = 'kb'">按知识库</span>
+        </div>
+
+        <!-- 按用户视图 -->
+        <div v-if="permMode === 'user'" class="panel" style="padding:10px 0 4px">
+          <div class="panel-title" style="padding:0 22px;display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+            按用户授权
+            <select v-model="permSelUser" class="select" style="padding:6px 10px;min-width:160px">
+              <option value="" disabled>选择用户</option>
+              <option v-for="u in users" :key="u.id" :value="u.id">{{ u.username }}{{ u.isActive ? '' : '（已禁用）' }}</option>
+            </select>
+          </div>
+          <table class="doc-table">
+            <thead><tr><th>知识库</th><th>可见性</th><th>权限</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="k in adminKbs" :key="k.id">
+                <td>{{ k.name }}</td>
+                <td>{{ k.isPublic ? '公开' : '私有' }}</td>
+                <td>
+                  <select :value="permTypeOf(permSelUser, k.id)" class="select" style="padding:6px 10px;min-width:130px"
+                    @change="changePerm(userById(permSelUser), k, $event.target.value)">
+                    <option value="">无权限</option>
+                    <option value="READ">只读 READ</option>
+                    <option value="WRITE">读写 WRITE</option>
+                    <option value="ADMIN">管理 ADMIN</option>
+                  </select>
+                </td>
+                <td>
+                  <span v-if="permTypeOf(permSelUser, k.id)" class="icon-btn danger" title="回收权限"
+                    @click="changePerm(userById(permSelUser), k, '')">✕</span>
+                </td>
+              </tr>
+              <tr v-if="!adminKbs.length"><td colspan="4"><div class="empty-state">暂无知识库</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- 按知识库视图 -->
+        <div v-if="permMode === 'kb'" class="panel" style="padding:10px 0 4px">
+          <div class="panel-title" style="padding:0 22px;display:flex;align-items:center;flex-wrap:wrap;gap:10px">
+            按知识库授权
+            <select v-model="permSelKb" class="select" style="padding:6px 10px;min-width:160px">
+              <option value="" disabled>选择知识库</option>
+              <option v-for="k in adminKbs" :key="k.id" :value="k.id">{{ k.name }}</option>
+            </select>
+          </div>
+          <table class="doc-table">
+            <thead><tr><th>用户</th><th>状态</th><th>权限</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="u in users" :key="u.id">
+                <td>{{ u.username }}</td>
+                <td>{{ u.isActive ? '启用' : '禁用' }}</td>
+                <td>
+                  <select :value="permTypeOf(u.id, permSelKb)" class="select" style="padding:6px 10px;min-width:130px"
+                    @change="changePerm(u, kbById(permSelKb), $event.target.value)">
+                    <option value="">无权限</option>
+                    <option value="READ">只读 READ</option>
+                    <option value="WRITE">读写 WRITE</option>
+                    <option value="ADMIN">管理 ADMIN</option>
+                  </select>
+                </td>
+                <td>
+                  <span v-if="permTypeOf(u.id, permSelKb)" class="icon-btn danger" title="回收权限"
+                    @click="changePerm(u, kbById(permSelKb), '')">✕</span>
+                </td>
+              </tr>
+              <tr v-if="!users.length"><td colspan="4"><div class="empty-state">暂无用户</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+
         <div class="panel">
-          <div class="panel-title">授权 / 变更权限</div>
+          <div class="panel-title">快捷授权 / 回收</div>
           <div style="display:flex;gap:9px;flex-wrap:wrap">
             <input v-model="permUser" class="input" style="flex:1;min-width:130px" placeholder="用户名" />
             <select v-model="permKb" class="select" style="flex:1;min-width:150px;padding:10px">
               <option value="" disabled>选择知识库</option>
-              <option v-for="k in kb.kbs" :key="k.id" :value="String(k.id)">{{ k.name }}</option>
+              <option v-for="k in adminKbs" :key="k.id" :value="String(k.id)">{{ k.name }}</option>
             </select>
             <select v-model="permType" class="select" style="padding:10px">
-              <option>READ</option><option>WRITE</option><option>ADMIN</option>
+              <option value="READ">只读 READ</option>
+              <option value="WRITE">读写 WRITE</option>
+              <option value="ADMIN">管理 ADMIN</option>
             </select>
             <button class="btn" style="padding:10px 20px;font-size:13px" @click="doGrant">授权</button>
             <button class="btn-ghost danger" style="padding:10px 16px" @click="doRevoke">回收权限</button>
           </div>
           <div v-if="permMsg" style="font-size:12px;margin-top:10px"
             :style="{ color: permOk ? 'var(--green)' : 'var(--red)' }">{{ permMsg }}</div>
-          <div style="font-size:12px;color:var(--text-3);margin-top:10px">
-            仅知识库管理员可执行；已有权限时「授权」会升级为新的权限类型，「回收」移除该用户在此知识库的全部权限。
-          </div>
         </div>
       </div>
 
@@ -329,9 +410,11 @@ import { useAuthStore } from '../stores/auth'
 import { useKBStore } from '../stores/kb'
 import { useChatStore } from '../stores/chat'
 import {
-  getAdminUsers, createUser, deleteUser, batchUsers, getAdminStats, getAuditLog,
-  listFeedback, getNotifications, markNotifsRead, grantPerm, revokePerm,
-  createKB, deleteKB, getDocs, deleteDoc,
+  getAdminUsers, createUser, deleteUser, updateUserStatus, resetUserPassword, forceLogoutUser,
+  batchUsers, getAdminStats, getAuditLog, getAdminKbs, getAdminPerms,
+  grantPermAdmin, revokePermAdmin,
+  listFeedback, getNotifications, markNotifsRead,
+  createKB, updateKB, deleteKB, getDocs, deleteDoc,
   getModelConfig, updateModelConfig,
   getSkills, updateSkill,
   getMcpServers, createMcpServer, updateMcpServer, deleteMcpServer
@@ -381,12 +464,13 @@ async function loadUsers() {
 
 // ── 知识库管理 ──
 const newKbName = ref(''); const kbMsg = ref('')
+const adminKbs = ref([])
 async function createKb() {
   if (!newKbName.value.trim()) return
   try {
     const { data } = await createKB(newKbName.value.trim())
     kbMsg.value = data.code === 200 ? '创建成功' : (data.message || '创建失败')
-    if (data.code === 200) { newKbName.value = ''; await kb.load() }
+    if (data.code === 200) { newKbName.value = ''; await loadAdminKbs() }
   } catch (e) { kbMsg.value = '创建失败' }
 }
 async function removeKb(k) {
@@ -394,7 +478,7 @@ async function removeKb(k) {
   try {
     const { data } = await deleteKB(k.id)
     if (data.code !== 200) alert(data.message || '删除失败')
-    await kb.load()
+    await loadAdminKbs()
     if (docsKbId.value === String(k.id)) { docsKbId.value = ''; docList.value = [] }
   } catch (e) { }
 }
@@ -402,6 +486,19 @@ function openDocs(k) {
   docsKbId.value = String(k.id)
   tab.value = 'docs'
   loadDocs()
+}
+async function loadAdminKbs() {
+  try {
+    const { data } = await getAdminKbs()
+    if (data.code === 200) adminKbs.value = data.data
+  } catch (e) { }
+}
+async function togglePublic(k) {
+  try {
+    const { data } = await updateKB(k.id, { isPublic: !k.isPublic })
+    if (data.code !== 200) alert(data.message || '操作失败')
+    await loadAdminKbs()
+  } catch (e) { }
 }
 
 // ── 文档管理 ──
@@ -523,6 +620,33 @@ async function removeUser(id) {
     await loadUsers()
   } catch (e) { }
 }
+async function toggleUserStatus(u) {
+  const disabling = !!u.isActive
+  const tip = disabling ? '禁用后该用户全部会话将立即登出，且无法登录。' : '启用后该用户可以正常登录。'
+  if (!confirm(`确定${disabling ? '禁用' : '启用'}用户「${u.username}」？${tip}`)) return
+  try {
+    const { data } = await updateUserStatus(u.id, !u.isActive)
+    if (data.code !== 200) alert(data.message || '操作失败')
+    await loadUsers()
+  } catch (e) { alert('操作失败') }
+}
+async function resetPw(u) {
+  const pw = prompt(`请输入「${u.username}」的新密码（8位以上，需包含大小写字母、数字和特殊字符）`)
+  if (!pw) return
+  try {
+    const { data } = await resetUserPassword(u.id, pw)
+    if (data.code !== 200) alert(data.message || '重置失败')
+    else alert('密码已重置，该用户已强制登出')
+  } catch (e) { alert('操作失败') }
+}
+async function forceLogout(u) {
+  if (!confirm(`确定强制登出用户「${u.username}」的全部会话？`)) return
+  try {
+    const { data } = await forceLogoutUser(u.id)
+    if (data.code !== 200) alert(data.message || '操作失败')
+    else alert('已强制该用户全部会话登出')
+  } catch (e) { alert('操作失败') }
+}
 async function batchCreate() {
   if (!csv.value.trim()) return
   try {
@@ -534,24 +658,72 @@ async function batchCreate() {
   } catch (e) { batchResult.value = '导入失败' }
 }
 
-// ── 权限 ──
+// ── 权限矩阵 ──
 const permUser = ref(''); const permKb = ref(''); const permType = ref('READ')
 const permMsg = ref(''); const permOk = ref(true)
+const permMode = ref('user')
+const permSelUser = ref('')
+const permSelKb = ref('')
+const permRows = ref([])
+const permMap = computed(() => {
+  const m = {}
+  permRows.value.forEach(p => { m[`${p.userId}:${p.kbId}`] = p.permissionType })
+  return m
+})
+async function loadPerms() {
+  try {
+    const { data } = await getAdminPerms()
+    if (data.code === 200) permRows.value = data.data
+  } catch (e) { }
+}
+async function loadPermData() {
+  await Promise.all([loadUsers(), loadAdminKbs(), loadPerms()])
+}
+function permTypeOf(userId, kbId) {
+  if (!userId || !kbId) return ''
+  return permMap.value[`${userId}:${kbId}`] || ''
+}
+function userById(id) {
+  return users.value.find(u => u.id === id) || null
+}
+function kbById(id) {
+  return adminKbs.value.find(k => k.id === id) || null
+}
+async function changePerm(user, kb, type) {
+  if (!user || !kb) return
+  const label = `用户「${user.username}」在知识库「${kb.name}」`
+  if (type === '') {
+    if (!permTypeOf(user.id, kb.id)) return
+    if (!confirm(`确定回收${label}的全部权限？`)) return
+    try {
+      const { data } = await revokePermAdmin(user.username, String(kb.id))
+      if (data.code !== 200) alert(data.message || '回收失败')
+    } catch (e) { alert('操作失败') }
+  } else {
+    try {
+      const { data } = await grantPermAdmin(user.username, String(kb.id), type)
+      if (data.code !== 200) alert(data.message || '授权失败')
+    } catch (e) { alert('操作失败') }
+  }
+  await loadPerms()
+}
 async function doGrant() {
   if (!permUser.value || !permKb.value) { permOk.value = false; permMsg.value = '请填写用户名并选择知识库'; return }
   try {
-    const { data } = await grantPerm(permUser.value, permKb.value, permType.value)
+    const { data } = await grantPermAdmin(permUser.value, permKb.value, permType.value)
     permOk.value = data.code === 200
     permMsg.value = data.message || (data.code === 200 ? '授权成功' : '授权失败')
+    if (data.code === 200) await loadPerms()
   } catch (e) { permOk.value = false; permMsg.value = '操作失败' }
 }
 async function doRevoke() {
   if (!permUser.value || !permKb.value) { permOk.value = false; permMsg.value = '请填写用户名并选择知识库'; return }
   if (!confirm(`回收 ${permUser.value} 在该知识库的全部权限？`)) return
   try {
-    const { data } = await revokePerm(permUser.value, permKb.value)
+    const { data } = await revokePermAdmin(permUser.value, permKb.value)
     permOk.value = data.code === 200
     permMsg.value = data.message || (data.code === 200 ? '权限已回收' : '回收失败')
+    if (data.code === 200) await loadPerms()
   } catch (e) { permOk.value = false; permMsg.value = '操作失败' }
 }
 
@@ -587,18 +759,19 @@ const fmtTime = (t) => t ? String(t).replace('T', ' ').substring(0, 19) : ''
 watch(tab, (t) => {
   if (t === 'dash') loadDash()
   else if (t === 'users') loadUsers()
-  else if (t === 'kb') kb.load()
-  else if (t === 'docs') { if (!kb.kbs.length) kb.load(); loadDocs() }
+  else if (t === 'kb') loadAdminKbs()
+  else if (t === 'docs') { if (!adminKbs.length) loadAdminKbs(); loadDocs() }
   else if (t === 'model') loadModelConfig()
   else if (t === 'skills') loadSkills()
   else if (t === 'mcp') loadMcps()
+  else if (t === 'perm') loadPermData()
   else if (t === 'fb') loadFeedback()
   else if (t === 'notif') loadNotifs()
   else if (t === 'audit') loadAudit()
 })
 
 onMounted(async () => {
-  if (!kb.kbs.length) await kb.load()
+  if (!adminKbs.length) await loadAdminKbs()
   loadDash()
 })
 </script>
