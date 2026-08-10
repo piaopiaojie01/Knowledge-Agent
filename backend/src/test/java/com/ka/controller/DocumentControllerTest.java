@@ -22,6 +22,8 @@ import org.mockito.quality.Strictness;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.multipart.MultipartFile;
+import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -48,13 +50,14 @@ class DocumentControllerTest {
     @Mock private UserRepository userRepository;
     @Mock private AgentClient agentClient;
     @Mock private MultipartFile file;
+    private final MeterRegistry meterRegistry = new SimpleMeterRegistry();
 
     private DocumentController controller;
 
     @BeforeEach
     void setUp() {
         controller = new DocumentController(documentService, documentRepository, kbRepository,
-                permissionRepository, userRepository, agentClient);
+                permissionRepository, userRepository, agentClient, meterRegistry);
         // 当前登录用户 id=1，默认对该 KB 有写权限
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(1L, null, List.of()));
@@ -309,5 +312,48 @@ class DocumentControllerTest {
         assertEquals(200, resp.getCode());
         verify(agentClient).deleteByDoc(1L);
         verify(agentClient).ingest(eq(1L), any(), eq("kb"), eq("new content"));
+    }
+
+    @Test
+    void Excel上传受理成功且回填内容预览() throws IOException {
+        mockFile(new byte[]{1, 2, 3, 4}, "data.xlsx");
+        when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
+                .thenReturn(Optional.empty());
+        when(userRepository.addStorageUsedIfWithinLimit(1L, 4L)).thenReturn(1);
+        when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
+            Document d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(1L);
+            return d;
+        });
+        when(agentClient.ingestExcel(anyLong(), any(), any(), any()))
+                .thenReturn(new AgentClient.IngestResponse(true, "ok", "processing", "| 产品 | 销量 |\n| 苹果 | 100 |"));
+
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
+
+        assertEquals(200, resp.getCode());
+        assertEquals("PROCESSING", resp.getData().getDocStatus());
+        assertTrue(resp.getData().getContent().contains("产品"));
+        verify(agentClient).ingestExcel(anyLong(), any(), any(), any());
+    }
+
+    @Test
+    void CSV按文本上传成功() throws IOException {
+        mockFile("产品,销量\n苹果,100\n".getBytes(StandardCharsets.UTF_8), "data.csv");
+        when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
+                .thenReturn(Optional.empty());
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), anyLong())).thenReturn(1);
+        when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
+            Document d = inv.getArgument(0);
+            if (d.getId() == null) d.setId(1L);
+            return d;
+        });
+        when(agentClient.ingest(any(), any(), any(), any()))
+                .thenReturn(new AgentClient.IngestResponse(true, "ok", "processing"));
+
+        ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
+
+        assertEquals(200, resp.getCode());
+        assertEquals("csv", resp.getData().getFileType());
+        verify(agentClient).ingest(any(), any(), any(), contains("苹果"));
     }
 }

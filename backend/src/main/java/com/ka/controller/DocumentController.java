@@ -20,6 +20,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import io.micrometer.core.instrument.MeterRegistry;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -49,6 +50,7 @@ public class DocumentController {
     private final PermissionRepository permissionRepository;
     private final UserRepository userRepository;
     private final AgentClient agentClient;
+    private final MeterRegistry meterRegistry;
 
     @GetMapping("/kb/{kbId}")
     public ApiResponse<List<DocumentDTO>> listByKb(@PathVariable Long kbId) {
@@ -107,6 +109,7 @@ public class DocumentController {
         switch (ext) {
             case "txt" -> { content = decodeUtf8(bytes); if (content == null) return ApiResponse.error(400, "文件不是有效的 UTF-8 编码"); fileType = "text"; isImage = false; }
             case "md"  -> { content = decodeUtf8(bytes); if (content == null) return ApiResponse.error(400, "文件不是有效的 UTF-8 编码"); fileType = "markdown"; isImage = false; }
+            case "csv" -> { content = decodeUtf8(bytes); if (content == null) return ApiResponse.error(400, "文件不是有效的 UTF-8 编码"); fileType = "csv"; isImage = false; }
             case "pdf" -> {
                 try {
                     content = extractPdfText(bytes);
@@ -117,6 +120,7 @@ public class DocumentController {
                 fileType = "pdf"; isImage = false;
             }
             case "png", "jpg", "jpeg" -> { fileType = "image"; isImage = true; }
+            case "xlsx" -> { fileType = "excel"; isImage = false; }
             default -> { return ApiResponse.error(400, "不支持的文件类型: " + ext); }
         }
 
@@ -149,6 +153,8 @@ public class DocumentController {
         AgentClient.IngestResponse ingestResp;
         if (isImage) {
             ingestResp = agentClient.ingestImage(doc.getId(), filename, kb.getName(), bytes, device);
+        } else if ("excel".equals(fileType)) {
+            ingestResp = agentClient.ingestExcel(doc.getId(), filename, kb.getName(), bytes);
         } else if ("pdf".equals(fileType)) {
             ingestResp = agentClient.ingestPdf(doc.getId(), filename, kb.getName(), bytes, device);
         } else {
@@ -161,9 +167,14 @@ public class DocumentController {
         } else {
             // agent 已受理，实际向量化在后台线程执行，最终状态由 IngestStatusPoller 轮询落定
             doc.setDocStatus("PROCESSING");
+            // Excel 由 agent 解析：回填内容预览，支持全文搜索与预览
+            if (ingestResp.getContentPreview() != null && !ingestResp.getContentPreview().isBlank()) {
+                doc.setContent(ingestResp.getContentPreview());
+            }
             doc = documentRepository.save(doc);
         }
 
+        meterRegistry.counter("ka.docs.uploaded", "type", fileType).increment();
         return ApiResponse.success("上传成功，正在后台解析入库", toDTO(doc));
     }
 
@@ -250,6 +261,8 @@ public class DocumentController {
 
     /** 当前用户对该 KB 是否有 WRITE 或 ADMIN 权限 */
     private boolean hasWriteAccess(Long kbId, Long userId) {
+        // 全局管理员可管理任意知识库的文档
+        if (com.ka.config.SecurityUtils.isAdmin()) return true;
         return permissionRepository.existsByUserIdAndKbIdAndPermissionTypeIn(
                 userId, kbId, List.of("WRITE", "ADMIN"));
     }
