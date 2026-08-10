@@ -23,6 +23,15 @@ public class ConversationService {
     /** 保存一条对话消息到 MySQL */
     @Transactional
     public Conversation save(String sessionId, Long userId, String role, String content, int inputTokens, int outputTokens) {
+        // 会话以首条用户消息命名（前端/历史会话无标题时回退 sessionId）
+        boolean isFirst = repo.findBySessionIdAndUserIdOrderByCreatedAtAsc(sessionId, userId).isEmpty();
+        String title = null;
+        if (isFirst && "user".equals(role) && content != null) {
+            String trimmed = content.trim();
+            if (!trimmed.isEmpty()) {
+                title = trimmed.length() > 30 ? trimmed.substring(0, 30) + "…" : trimmed;
+            }
+        }
         Conversation conv = Conversation.builder()
                 .sessionId(sessionId)
                 .userId(userId)
@@ -30,6 +39,7 @@ public class ConversationService {
                 .content(content)
                 .inputTokens(inputTokens)
                 .outputTokens(outputTokens)
+                .title(title)
                 .build();
         return repo.save(conv);
     }
@@ -53,13 +63,42 @@ public class ConversationService {
         for (Conversation c : all) {
             String sid = c.getSessionId();
             if (!sessionTitles.containsKey(sid)) {
+                // 先用最近消息占位（通常无标题），有标题的消息随后覆盖
                 sessionTitles.put(sid, c.getTitle() != null ? c.getTitle() : sid.substring(0, Math.min(16, sid.length())));
+            }
+            if (c.getTitle() != null && !c.getTitle().isBlank()) {
+                sessionTitles.put(sid, c.getTitle());
+            }
+        }
+        // 每个会话的最近活动时间（覆盖全部会话，按时间倒序）
+        Map<String, LocalDateTime> sessionLatest = new java.util.HashMap<>();
+        List<String> ordered = new java.util.ArrayList<>();
+        for (Object[] row : repo.findSessionLatestByUserId(userId)) {
+            String sid = String.valueOf(row[0]);
+            if (!ordered.contains(sid)) {
+                ordered.add(sid);
+            }
+            if (row[1] instanceof java.sql.Timestamp ts) {
+                sessionLatest.put(sid, ts.toLocalDateTime());
+            } else if (row[1] instanceof LocalDateTime ldt) {
+                sessionLatest.put(sid, ldt);
+            }
+        }
+        // 补上未出现在时间查询里的会话（兜底）
+        for (String sid : sessionTitles.keySet()) {
+            if (!ordered.contains(sid)) {
+                ordered.add(sid);
             }
         }
         List<Map<String, String>> result = new java.util.ArrayList<>();
-        for (Map.Entry<String, String> e : sessionTitles.entrySet()) {
+        for (String sid : ordered) {
             Map<String, String> m = new java.util.HashMap<>();
-            m.put("sessionId", e.getKey()); m.put("title", e.getValue());
+            m.put("sessionId", sid);
+            m.put("title", sessionTitles.getOrDefault(sid, sid));
+            LocalDateTime latest = sessionLatest.get(sid);
+            if (latest != null) {
+                m.put("updatedAt", latest.toString());
+            }
             result.add(m);
         }
         return result;
@@ -84,6 +123,8 @@ public class ConversationService {
         int totalInput30d = recent.stream().mapToInt(Conversation::getInputTokens).sum();
         int totalOutput30d = recent.stream().mapToInt(Conversation::getOutputTokens).sum();
         result.put("total30d", totalInput30d + totalOutput30d);
+        result.put("total30dInput", totalInput30d);
+        result.put("total30dOutput", totalOutput30d);
 
         String sid = repo.findTopByUserIdOrderByCreatedAtDesc(userId)
                 .map(Conversation::getSessionId).orElse("");
@@ -92,8 +133,19 @@ public class ConversationService {
         int sessionInput = sessionMsgs.stream().mapToInt(Conversation::getInputTokens).sum();
         int sessionOutput = sessionMsgs.stream().mapToInt(Conversation::getOutputTokens).sum();
         result.put("session", sessionInput + sessionOutput);
+        result.put("sessionInput", sessionInput);
+        result.put("sessionOutput", sessionOutput);
 
-        result.put("totalAll", repo.sumTokensByUserId(userId));
+        Long allTokens = repo.sumTokensByUserId(userId);
+        result.put("totalAll", allTokens == null ? 0L : allTokens);
+        List<Object[]> split = repo.sumTokensSplitByUserId(userId);
+        long allIn = 0L, allOut = 0L;
+        if (split != null && !split.isEmpty() && split.get(0) != null) {
+            allIn = ((Number) split.get(0)[0]).longValue();
+            allOut = ((Number) split.get(0)[1]).longValue();
+        }
+        result.put("totalAllInput", allIn);
+        result.put("totalAllOutput", allOut);
         return result;
     }
 

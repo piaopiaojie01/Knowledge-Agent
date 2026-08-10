@@ -4,6 +4,8 @@ import com.ka.config.SecurityUtils;
 import com.ka.dto.ApiResponse;
 import com.ka.entity.Conversation;
 import com.ka.service.ConversationService;
+import com.ka.service.LlmCostService;
+import com.ka.service.ModelConfigService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -17,6 +19,8 @@ import java.util.Map;
 public class ConversationController {
 
     private final ConversationService service;
+    private final LlmCostService llmCostService;
+    private final ModelConfigService modelConfigService;
 
     /** 加载当前会话（仅限本人） */
     @GetMapping("/{sessionId}")
@@ -54,7 +58,20 @@ public class ConversationController {
     /** token 统计 */
     @GetMapping("/stats")
     public ApiResponse<Map<String, Object>> stats() {
-        return ApiResponse.success(service.getTokenStats(SecurityUtils.getCurrentUserId()));
+        Map<String, Object> stats = service.getTokenStats(SecurityUtils.getCurrentUserId());
+        String model = modelConfigService.getOrCreate().getModelName();
+        stats.put("model", model);
+        stats.put("sessionCost", llmCostService.estimate(
+                model, num(stats.get("sessionInput")), num(stats.get("sessionOutput"))));
+        stats.put("total30dCost", llmCostService.estimate(
+                model, num(stats.get("total30dInput")), num(stats.get("total30dOutput"))));
+        stats.put("totalAllCost", llmCostService.estimate(
+                model, num(stats.get("totalAllInput")), num(stats.get("totalAllOutput"))));
+        return ApiResponse.success(stats);
+    }
+
+    private long num(Object o) {
+        return o instanceof Number n ? n.longValue() : 0L;
     }
 
     

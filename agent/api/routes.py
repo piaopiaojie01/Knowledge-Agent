@@ -91,7 +91,8 @@ async def rag_query(req: RagQueryRequest):
         # 4. 生成回答（含长期记忆上下文）
         history = [h.model_dump() for h in req.history] if req.history else None
         answer, input_tokens, output_tokens = await asyncio.to_thread(
-            generator.generate, req.question, reranked_docs, history, ltm_context)
+            generator.generate, req.question, reranked_docs, history, ltm_context,
+            False, req.llm_config, req.skills, req.mcp_servers)
 
         # 5. 异步提取长期记忆（不阻塞响应）
         def _extract():
@@ -111,7 +112,11 @@ async def rag_query(req: RagQueryRequest):
         sources = _build_sources(reranked_docs)
 
         metrics = {"total_in_kb": total_in_kb, "retrieved": len(docs), "after_rerank": len(reranked_docs), "best_score": round(best_retrieved, 4), "min_threshold": settings.min_score, "source_threshold": settings.source_threshold}
-        return RagQueryResponse(answer=answer, sources=sources, metrics=metrics, input_tokens=input_tokens, output_tokens=output_tokens)
+        return RagQueryResponse(
+            answer=answer, sources=sources, metrics=metrics,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+            cache_hit_tokens=generator.last_cache_hit,
+            cache_miss_tokens=generator.last_cache_miss)
 
     except Exception as e:
         logger.error(f"RAG 查询失败: {e}", exc_info=True)
@@ -150,7 +155,9 @@ async def rag_query_stream(req: RagQueryRequest):
     def event_stream():
         full_answer = ""
         try:
-            for delta in generator.generate_stream(req.question, reranked_docs, history, ltm_context):
+            for delta in generator.generate_stream(
+                    req.question, reranked_docs, history, ltm_context,
+                    req.llm_config, req.skills, req.mcp_servers):
                 full_answer += delta
                 yield f"data: {json.dumps({'type': 'delta', 'text': delta}, ensure_ascii=False)}\n\n"
             # 与非流式同口径：generate_stream 内部按全量 messages 统计（history 已含其中，勿重复加）
@@ -158,6 +165,8 @@ async def rag_query_stream(req: RagQueryRequest):
             output_tokens = count_tokens(full_answer)
             final = {"type": "final", "sources": sources,
                      "input_tokens": input_tokens, "output_tokens": output_tokens,
+                     "cache_hit_tokens": generator.last_cache_hit,
+                     "cache_miss_tokens": generator.last_cache_miss,
                      "metrics": metrics}
             yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
         except Exception as e:
@@ -219,7 +228,7 @@ async def orchestrated_query(req: RagQueryRequest):
         history = [h.model_dump() for h in req.history] if req.history else None
 
         # Step 1: Dispatch
-        intent = await asyncio.to_thread(orchestrator.dispatch, req.question)
+        intent = await asyncio.to_thread(orchestrator.dispatch, req.question, req.llm_config)
         logger.info(f"编排意图: {intent}")
 
         # Step 2: Search if needed
@@ -229,7 +238,7 @@ async def orchestrated_query(req: RagQueryRequest):
             docs = await asyncio.to_thread(reranker.rerank, req.question, docs)
 
         # Step 3: Gather context (retriever may suggest tool use)
-        gather_result = await asyncio.to_thread(orchestrator.retrieve, req.question, docs)
+        gather_result = await asyncio.to_thread(orchestrator.retrieve, req.question, docs, req.llm_config)
         context = gather_result.get("context", "无相关资料")
 
         # If retriever suggests tool use, execute the tool
@@ -249,7 +258,7 @@ async def orchestrated_query(req: RagQueryRequest):
         answer = await asyncio.to_thread(
             orchestrator.generate,
             query=req.question, context=context,
-            history=history, long_term_memory=ltm_context
+            history=history, long_term_memory=ltm_context, llm_config=req.llm_config
         )
 
         input_tokens = sum(count_tokens(m.get("content", "")) for m in (history or []))

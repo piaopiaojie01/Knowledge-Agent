@@ -10,6 +10,8 @@ export const useAuthStore = defineStore('auth', () => {
   const error = ref('')
   // 管理后台页面开关（仅 ADMIN 生效，App.vue 据此切换整页视图）
   const adminOpen = ref(false)
+  // 管理后台初始分区（如从顶部模型徽标进入时预选「模型配置」）
+  const adminTab = ref('dash')
 
   const isAdmin = computed(() => role.value === 'ADMIN')
   const isLoggedIn = computed(() => !!token.value)
@@ -37,9 +39,10 @@ export const useAuthStore = defineStore('auth', () => {
     } catch (e) { /* 后端不可达也继续本地清理 */ }
     token.value = ''; role.value = ''; username.value = ''
     adminOpen.value = false
+    adminTab.value = 'dash'
     localStorage.removeItem('ka_token'); localStorage.removeItem('ka_role')
     localStorage.removeItem('ka_username'); localStorage.removeItem('ka_session')
   }
 
-  return { token, role, username, loading, error, adminOpen, isAdmin, isLoggedIn, login, logout }
+  return { token, role, username, loading, error, adminOpen, adminTab, isAdmin, isLoggedIn, login, logout }
 })

@@ -1,18 +1,12 @@
 """混合检索模块 - 向量检索 + jieba 关键词加权融合"""
 import logging
-import jieba
 from typing import List, Dict, Any
 from embedding.bge_embedder import embedder
 from store.milvus_client import milvus_client
 from config import settings
+from core.text_utils import normalize_words
 
 logger = logging.getLogger(__name__)
-
-# 多字停用词（_query_words 只保留 len>=2 的词，单字虚词天然进不来）
-STOP_WORDS = {
-    "什么", "怎么", "如何", "为什么", "可以", "知道", "觉得", "请问",
-    "一下", "哪些", "哪个", "多少", "是不是", "有没有",
-}
 
 # 融合权重: final = VECTOR_WEIGHT * vector_score + KEYWORD_WEIGHT * keyword_score
 VECTOR_WEIGHT = 0.7
@@ -28,15 +22,16 @@ class Retriever:
         self.top_k = settings.retrieval_top_k
 
     def _query_words(self, query: str) -> set:
-        """query 分词、去停用词后的词集合"""
-        return {w for w in jieba.cut(query) if len(w) >= 2 and w not in STOP_WORDS}
+        """query 中英双语分词（英文小写化、双语言停用词过滤）后的词集合"""
+        return set(normalize_words(query, min_len=2))
 
     def _keyword_score(self, query_words: set, title: str, content: str) -> float:
-        """关键词加权重合度：content 命中计 1，title 命中计 TITLE_HIT_WEIGHT，归一化到 0-1"""
+        """关键词加权重合度：content 命中计 1，title 命中计 TITLE_HIT_WEIGHT，归一化到 0-1
+        中英双语：英文统一小写并去停用词，AI/ai、Company's/company 可命中"""
         if not query_words:
             return 0.0
-        content_words = set(jieba.cut(content or ""))
-        title_words = set(jieba.cut(title or ""))
+        content_words = set(normalize_words(content or "", min_len=2))
+        title_words = set(normalize_words(title or "", min_len=2))
         hit = 0
         for w in query_words:
             if w in title_words:

@@ -18,4 +18,9 @@ public class RagQueryResponse {
     private Map<String, Object> metrics;
     private int inputTokens;
     private int outputTokens;
+    /** 提示词缓存命中/未命中 token（DeepSeek 等返回；用于计算缓存命中率与成本） */
+    private int cacheHitTokens;
+    private int cacheMissTokens;
+    /** 本次问答估算成本（元） */
+    private Double cost;
 }

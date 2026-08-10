@@ -36,12 +36,24 @@ public class AgentClient {
     }
 
     public AgentQueryResponse ragQuery(String question, List<String> kbNames,
-                                        List<Map<String, String>> history, String sessionId) {
+                                        List<Map<String, String>> history, String sessionId,
+                                        Map<String, Object> llmConfig,
+                                        List<String> skills,
+                                        List<Map<String, String>> mcpServers) {
         Map<String, Object> body = new HashMap<>();
         body.put("question", question);
         body.put("kb_names", kbNames != null ? kbNames : List.of());
         body.put("history", history != null ? history : List.of());
         body.put("session_id", sessionId != null ? sessionId : "");
+        if (llmConfig != null && !llmConfig.isEmpty()) {
+            body.put("llm_config", llmConfig);
+        }
+        if (skills != null && !skills.isEmpty()) {
+            body.put("skills", skills);
+        }
+        if (mcpServers != null && !mcpServers.isEmpty()) {
+            body.put("mcp_servers", mcpServers);
+        }
         try {
             HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
             Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/query", req, Map.class).getBody();
@@ -51,15 +63,22 @@ public class AgentClient {
                     .sources((List<Map<String, Object>>) rb.getOrDefault("sources", List.of()))
                     .metrics((Map<String, Object>) rb.get("metrics"))
                     .inputTokens(toInt(rb.get("input_tokens")))
-                    .outputTokens(toInt(rb.get("output_tokens"))).build();
+                    .outputTokens(toInt(rb.get("output_tokens")))
+                    .cacheHitTokens(toInt(rb.get("cache_hit_tokens")))
+                    .cacheMissTokens(toInt(rb.get("cache_miss_tokens")))
+                    .build();
         } catch (RestClientException e) {
             return AgentQueryResponse.builder().success(false).answer("Agent 失败: " + e.getMessage()).build();
         }
     }
 
-    public AgentQueryResponse ragSearch(String question, List<String> kbNames) {
+    public AgentQueryResponse ragSearch(String question, List<String> kbNames,
+                                        Map<String, Object> llmConfig) {
         Map<String, Object> body = new HashMap<>();
         body.put("question", question); body.put("kb_names", kbNames != null ? kbNames : List.of()); body.put("top_k", 5);
+        if (llmConfig != null && !llmConfig.isEmpty()) {
+            body.put("llm_config", llmConfig);
+        }
         try {
             HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
             Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/search", req, Map.class).getBody();
@@ -156,6 +175,7 @@ public class AgentClient {
         private java.util.List<java.util.Map<String, Object>> sources;
         private java.util.Map<String, Object> metrics;
         private int inputTokens; private int outputTokens;
+        private int cacheHitTokens; private int cacheMissTokens;
     }
 
     @Data @lombok.AllArgsConstructor @lombok.NoArgsConstructor

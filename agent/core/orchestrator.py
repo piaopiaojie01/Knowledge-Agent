@@ -86,41 +86,55 @@ class Orchestrator:
         self.client = OpenAI(api_key=settings.deepseek_api_key, base_url=settings.deepseek_base_url)
         self.model = settings.deepseek_model
 
-    def _call(self, system_prompt: str, user_message: str, temperature: float = 0.3, max_tokens: int = 1024) -> str:
+    def _resolve(self, llm_config, temperature, max_tokens):
+        """合并管理后台下发配置与本地环境变量"""
+        if not llm_config:
+            return self.client, self.model, temperature, max_tokens
+        client = OpenAI(
+            api_key=llm_config.api_key or settings.deepseek_api_key,
+            base_url=llm_config.base_url or settings.deepseek_base_url)
+        model = llm_config.model or self.model
+        temp = llm_config.temperature if llm_config.temperature is not None else temperature
+        max_tok = llm_config.max_tokens or max_tokens
+        return client, model, temp, max_tok
+
+    def _call(self, system_prompt: str, user_message: str, temperature: float = 0.3,
+              max_tokens: int = 1024, llm_config=None) -> str:
         """调用 LLM 并返回文本"""
-        if not settings.deepseek_api_key:
+        client, model, temp, max_tok = self._resolve(llm_config, temperature, max_tokens)
+        if not settings.deepseek_api_key and not (llm_config and llm_config.api_key):
             return "{}"
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
+            resp = client.chat.completions.create(
+                model=model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message}
                 ],
-                temperature=temperature, max_tokens=max_tokens
+                temperature=temp, max_tokens=max_tok
             )
             return resp.choices[0].message.content or "{}"
         except Exception as e:
             logger.error(f"Orchestrator call failed: {e}")
             return "{}"
 
-    def dispatch(self, query: str) -> Dict[str, str]:
+    def dispatch(self, query: str, llm_config=None) -> Dict[str, str]:
         """第一步：分析用户意图，决定走哪条路线"""
-        result = self._call(DISPATCHER_PROMPT, query)
+        result = self._call(DISPATCHER_PROMPT, query, llm_config=llm_config)
         try:
             import json
             return json.loads(result)
         except Exception:
             return {"intent": "search", "reason": "fallback"}
 
-    def retrieve(self, query: str, docs: List[Dict]) -> str:
+    def retrieve(self, query: str, docs: List[Dict], llm_config=None) -> str:
         """第二步：检索专家整理上下文，判断是否需要工具"""
         context = "\n".join(
             f"[{d.get('title','')}] {d.get('content','')[:500]}"
             for d in docs[:5]
         ) if docs else "无检索结果"
         msg = f"用户问题：{query}\n\n检索结果：\n{context}"
-        result = self._call(RETRIEVER_PROMPT, msg)
+        result = self._call(RETRIEVER_PROMPT, msg, llm_config=llm_config)
         try:
             import json
             return json.loads(result)
@@ -128,22 +142,23 @@ class Orchestrator:
             return {"need_tool": False, "context": context}
 
     def generate(self, query: str, context: str, history: List[Dict] = None,
-                 long_term_memory: str = "") -> str:
+                 long_term_memory: str = "", llm_config=None) -> str:
         """第三步：生成最终回答（带反思循环）"""
-        answer = self._generate_once(query, context, history, long_term_memory)
+        answer = self._generate_once(query, context, history, long_term_memory, llm_config)
 
         # 反思循环：Critic 审查 → 如有问题 → 修正重生成（最多 3 轮）
         for i in range(3):
-            critic_result = self._critique(query, context, answer)
+            critic_result = self._critique(query, context, answer, llm_config)
             if critic_result.get("passed", False):
                 logger.info(f"反思通过 (第{i+1}轮)")
                 break
             logger.info(f"反思发现问题: {critic_result.get('issues', [])}, 修正中...")
             answer = self._regenerate(query, context, history,
-                                       critic_result.get("suggestion", ""), long_term_memory)
+                                       critic_result.get("suggestion", ""), long_term_memory, llm_config)
         return answer
 
-    def _generate_once(self, query: str, context: str, history: List[Dict], ltm: str) -> str:
+    def _generate_once(self, query: str, context: str, history: List[Dict], ltm: str,
+                       llm_config=None) -> str:
         sys = GENERATOR_PROMPT
         if ltm:
             sys += "\n\n用户背景：" + ltm
@@ -156,20 +171,21 @@ class Orchestrator:
         user_msg = f"用户问题：{query}\n\n上下文资料：\n{context}\n\n请生成详细回答。"
         msgs.append({"role": "user", "content": user_msg})
 
-        if not settings.deepseek_api_key:
+        if not settings.deepseek_api_key and not (llm_config and llm_config.api_key):
             return f"基于知识库检索结果，关于「{query}」未找到相关信息。"
 
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model, messages=msgs,
-                temperature=0.3, max_tokens=settings.max_tokens
+            client, model, temp, max_tok = self._resolve(llm_config, 0.3, settings.max_tokens)
+            resp = client.chat.completions.create(
+                model=model, messages=msgs,
+                temperature=temp, max_tokens=max_tok
             )
             return resp.choices[0].message.content or ""
         except Exception as e:
             logger.error(f"Generator failed: {e}")
             return "回答生成失败，请重试"
 
-    def _critique(self, query: str, context: str, answer: str) -> dict:
+    def _critique(self, query: str, context: str, answer: str, llm_config=None) -> dict:
         """Critic Agent：审查回答质量（KB 对比 + 自我反思）"""
         # 有 KB 资料 → 事实性审查
         if context and context != "无相关资料" and len(context) > 10:
@@ -179,7 +195,7 @@ class Orchestrator:
             # 无 KB → 纯自我反思（逻辑/表述/完整性）
             prompt = SELF_CRITIC_PROMPT.format(query=query, answer=answer[:2000])
             temp = 0.3
-        result = self._call("你是审查专家", prompt, temperature=temp, max_tokens=512)
+        result = self._call("你是审查专家", prompt, temperature=temp, max_tokens=512, llm_config=llm_config)
         try:
             import json
             return json.loads(result)
@@ -187,12 +203,12 @@ class Orchestrator:
             return {"passed": True}
 
     def _regenerate(self, query: str, context: str, history: List[Dict],
-                     suggestion: str, ltm: str) -> str:
+                     suggestion: str, ltm: str, llm_config=None) -> str:
         """反思后重新生成：把 Critic 建议加入上下文"""
         improved_ctx = context
         if suggestion:
             improved_ctx += "\n\n[改进建议]\n" + suggestion
-        return self._generate_once(query, improved_ctx, history, ltm)
+        return self._generate_once(query, improved_ctx, history, ltm, llm_config)
 
 
 # 全局单例

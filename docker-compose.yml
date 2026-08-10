@@ -112,6 +112,10 @@ services:
       REDIS_PASSWORD: ${REDIS_PASS:-ka_redis_dev_2026}
       KA_CHART_DIR: /app/charts
       KA_ICON_DIR: /app/icons
+      # 容器内连接中间件（不能指向容器自身 localhost）
+      DB_URL: jdbc:mysql://mysql:3306/knowledge_agent?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&useUnicode=true&connectionCollation=utf8mb4_unicode_ci
+      DB_USER: ka_user
+      DB_PASS: ${DB_PASS:-ka_pass_2024}
     volumes:
       - ka_charts:/app/charts
       - ka_icons:/app/icons
@@ -138,6 +142,8 @@ services:
       HF_HUB_OFFLINE: "0"
       MILVUS_HOST: milvus
       MILVUS_PORT: "19530"
+      KA_REDIS_HOST: redis
+      KA_REDIS_PORT: "6379"
     volumes:
       - ka_charts:/data/charts
       - ka_icons:/data/icons

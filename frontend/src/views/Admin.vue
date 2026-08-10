@@ -10,7 +10,8 @@
         <span class="anav-icon">{{ s.icon }}</span>{{ s.name }}
         <span v-if="s.key === 'notif' && chat.notifCount" class="notif-badge" style="margin-left:auto">{{ chat.notifCount }}</span>
       </div>
-      <button class="btn-ghost" style="margin-top:auto;justify-content:center" @click="auth.adminOpen = false">← 返回主界面</button>
+      <button class="btn-ghost" style="margin-top:auto;justify-content:center"
+        @click="auth.adminOpen = false; auth.adminTab = 'dash'">← 返回主界面</button>
     </aside>
 
     <main class="admin-main">
@@ -18,10 +19,10 @@
       <div v-if="tab === 'dash'">
         <h2 class="page-title">概览</h2>
         <div class="stat-cards">
-          <div class="stat-card"><div class="sc-num">{{ stats.userCount ?? '—' }}</div><div class="sc-label">注册用户</div></div>
-          <div class="stat-card"><div class="sc-num">{{ stats.kbCount ?? '—' }}</div><div class="sc-label">知识库</div></div>
-          <div class="stat-card"><div class="sc-num">{{ stats.docCount ?? '—' }}</div><div class="sc-label">文档</div></div>
-          <div class="stat-card"><div class="sc-num">{{ fbGoodRate }}</div><div class="sc-label">反馈好评率</div></div>
+          <div class="stat-card" title="进入用户管理" @click="tab = 'users'"><div class="sc-num">{{ stats.userCount ?? '—' }}</div><div class="sc-label">注册用户</div></div>
+          <div class="stat-card" title="进入知识库管理" @click="tab = 'kb'"><div class="sc-num">{{ stats.kbCount ?? '—' }}</div><div class="sc-label">知识库</div></div>
+          <div class="stat-card" title="进入文档管理" @click="tab = 'docs'"><div class="sc-num">{{ stats.docCount ?? '—' }}</div><div class="sc-label">文档</div></div>
+          <div class="stat-card" title="进入用户反馈" @click="tab = 'fb'"><div class="sc-num">{{ fbGoodRate }}</div><div class="sc-label">反馈好评率</div></div>
         </div>
         <div class="panel">
           <div class="panel-title">服务状态</div>
@@ -66,6 +67,178 @@
               <tr v-if="!users.length"><td colspan="5"><div class="empty-state">暂无用户</div></td></tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <!-- ── 知识库管理 ── -->
+      <div v-if="tab === 'kb'">
+        <h2 class="page-title">知识库管理</h2>
+        <div class="panel">
+          <div class="panel-title">新建知识库</div>
+          <div style="display:flex;gap:9px;flex-wrap:wrap">
+            <input v-model="newKbName" class="input" style="flex:1;min-width:180px" placeholder="知识库名称" />
+            <button class="btn btn-green" style="padding:10px 20px;font-size:13px" @click="createKb">新建</button>
+          </div>
+          <div v-if="kbMsg" style="font-size:12px;color:var(--text-2);margin-top:9px">{{ kbMsg }}</div>
+        </div>
+        <div class="panel" style="padding:10px 0 4px">
+          <div class="panel-title" style="padding:0 22px">知识库列表</div>
+          <table class="doc-table">
+            <thead><tr><th>ID</th><th>名称</th><th>描述</th><th>可见性</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="k in kb.kbs" :key="k.id">
+                <td>{{ k.id }}</td>
+                <td>{{ k.name }}</td>
+                <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ k.description || '—' }}</td>
+                <td>{{ k.isPublic ? '公开' : '私有' }}</td>
+                <td>
+                  <span class="btn-ghost btn-sm" @click="openDocs(k)">文档</span>
+                  <span class="icon-btn danger" title="删除知识库" @click="removeKb(k)">✕</span>
+                </td>
+              </tr>
+              <tr v-if="!kb.kbs.length"><td colspan="5"><div class="empty-state">暂无知识库</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── 文档管理 ── -->
+      <div v-if="tab === 'docs'">
+        <h2 class="page-title">文档管理</h2>
+        <div class="panel">
+          <div class="panel-title">选择知识库</div>
+          <select v-model="docsKbId" class="select" style="padding:10px;min-width:220px" @change="loadDocs">
+            <option value="" disabled>选择知识库</option>
+            <option v-for="k in kb.kbs" :key="k.id" :value="String(k.id)">{{ k.name }}</option>
+          </select>
+        </div>
+        <div class="panel" style="padding:10px 0 4px">
+          <div class="panel-title" style="padding:0 22px">文档列表</div>
+          <table class="doc-table">
+            <thead><tr><th>ID</th><th>标题</th><th>类型</th><th>状态</th><th>进度</th><th>创建时间</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="d in docList" :key="d.id">
+                <td>{{ d.id }}</td>
+                <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ d.title }}</td>
+                <td>{{ d.fileType }}</td>
+                <td>{{ d.docStatus }}</td>
+                <td>{{ d.ingestProgress ?? '—' }}</td>
+                <td style="font-size:12px">{{ fmtTime(d.createdAt) }}</td>
+                <td><span class="icon-btn danger" title="删除文档" @click="removeDoc(d)">✕</span></td>
+              </tr>
+              <tr v-if="!docList.length"><td colspan="7"><div class="empty-state">该知识库暂无文档</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── 模型配置 ── -->
+      <div v-if="tab === 'model'">
+        <h2 class="page-title">模型配置</h2>
+        <div class="panel">
+          <div class="panel-title">大模型设置（保存后对后续问答立即生效）</div>
+          <div style="display:flex;flex-direction:column;gap:11px;max-width:600px">
+            <div style="display:flex;align-items:center;gap:10px">
+              <label style="width:110px;font-size:13px;color:var(--text-2)">模型名</label>
+              <input v-model="mcModel" class="input" style="flex:1" list="model-suggestions" placeholder="deepseek-v4-flash" />
+              <datalist id="model-suggestions">
+                <option value="deepseek-v4-flash"></option>
+                <option value="deepseek-chat"></option>
+                <option value="gpt-4o"></option>
+                <option value="gpt-4o-mini"></option>
+                <option value="qwen-plus"></option>
+                <option value="glm-4-plus"></option>
+              </datalist>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <label style="width:110px;font-size:13px;color:var(--text-2)">接口地址</label>
+              <input v-model="mcBaseUrl" class="input" style="flex:1" placeholder="https://api.deepseek.com" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <label style="width:110px;font-size:13px;color:var(--text-2)">API Key</label>
+              <input v-model="mcApiKey" type="password" class="input" style="flex:1" :placeholder="mcKeyPlaceholder" autocomplete="off" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <label style="width:110px;font-size:13px;color:var(--text-2)">Temperature</label>
+              <input v-model="mcTemp" type="number" min="0" max="2" step="0.1" class="input" style="width:130px" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <label style="width:110px;font-size:13px;color:var(--text-2)">Max Tokens</label>
+              <input v-model="mcMaxTokens" type="number" min="1" step="1" class="input" style="width:150px" />
+            </div>
+            <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+              <button class="btn btn-green" style="padding:10px 24px;font-size:13px" @click="saveModelConfig">保存</button>
+              <span v-if="mcMsg" style="font-size:12px" :style="{ color: mcOk ? 'var(--green)' : 'var(--red)' }">{{ mcMsg }}</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-3)">
+              留空字段沿用 Agent 环境变量；API Key 留空表示不修改。保存后立即对新的问答生效，无需重启。
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 技能管理 ── -->
+      <div v-if="tab === 'skills'">
+        <h2 class="page-title">技能管理</h2>
+        <div class="panel" style="padding:10px 0 4px">
+          <div class="panel-title" style="padding:0 22px">内置技能（停用后 LLM 将不再获得该工具）</div>
+          <table class="doc-table">
+            <thead><tr><th>技能名</th><th>说明</th><th>状态</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="s in skills" :key="s.name">
+                <td><code>{{ s.name }}</code></td>
+                <td style="max-width:360px">{{ s.description }}</td>
+                <td>
+                  <span class="ntf-type" :class="{ up: s.enabled }">{{ s.enabled ? '已启用' : '已停用' }}</span>
+                </td>
+                <td>
+                  <button class="btn-ghost btn-sm" @click="toggleSkill(s)">
+                    {{ s.enabled ? '停用' : '启用' }}
+                  </button>
+                </td>
+              </tr>
+              <tr v-if="!skills.length"><td colspan="4"><div class="empty-state">暂无技能</div></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ── MCP 管理 ── -->
+      <div v-if="tab === 'mcp'">
+        <h2 class="page-title">MCP 管理</h2>
+        <div class="panel">
+          <div class="panel-title">添加 MCP 服务器</div>
+          <div style="display:flex;gap:9px;flex-wrap:wrap">
+            <input v-model="mcpName" class="input" style="flex:1;min-width:130px" placeholder="名称" />
+            <input v-model="mcpUrl" class="input" style="flex:2;min-width:240px" placeholder="Streamable HTTP / SSE 地址，如 http://localhost:9000/mcp" />
+            <input v-model="mcpDesc" class="input" style="flex:1;min-width:140px" placeholder="描述（可选）" />
+            <button class="btn btn-green" style="padding:10px 20px;font-size:13px" @click="addMcp">添加</button>
+          </div>
+          <div v-if="mcpMsg" style="font-size:12px;margin-top:9px" :style="{ color: mcpOk ? 'var(--green)' : 'var(--red)' }">{{ mcpMsg }}</div>
+        </div>
+        <div class="panel" style="padding:10px 0 4px">
+          <div class="panel-title" style="padding:0 22px">服务器列表</div>
+          <table class="doc-table">
+            <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>状态</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="m in mcps" :key="m.id">
+                <td>{{ m.id }}</td>
+                <td>{{ m.name }}</td>
+                <td style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ m.url }}</td>
+                <td>
+                  <span class="ntf-type" :class="{ up: m.enabled }">{{ m.enabled ? '已启用' : '已停用' }}</span>
+                </td>
+                <td>
+                  <button class="btn-ghost btn-sm" @click="toggleMcp(m)">{{ m.enabled ? '停用' : '启用' }}</button>
+                  <span class="icon-btn danger" title="删除" @click="removeMcp(m)">✕</span>
+                </td>
+              </tr>
+              <tr v-if="!mcps.length"><td colspan="5"><div class="empty-state">暂无 MCP 服务器</div></td></tr>
+            </tbody>
+          </table>
+          <div style="font-size:12px;color:var(--text-3);padding:0 22px 12px">
+            说明：需安装 mcp SDK（requirements.txt 已包含）。工具名以「服务器名__工具名」暴露给 LLM；连接或调用失败不会阻塞问答。
+          </div>
         </div>
       </div>
 
@@ -157,16 +330,26 @@ import { useKBStore } from '../stores/kb'
 import { useChatStore } from '../stores/chat'
 import {
   getAdminUsers, createUser, deleteUser, batchUsers, getAdminStats, getAuditLog,
-  listFeedback, getNotifications, markNotifsRead, grantPerm, revokePerm
+  listFeedback, getNotifications, markNotifsRead, grantPerm, revokePerm,
+  createKB, deleteKB, getDocs, deleteDoc,
+  getModelConfig, updateModelConfig,
+  getSkills, updateSkill,
+  getMcpServers, createMcpServer, updateMcpServer, deleteMcpServer
 } from '../api'
 
 const auth = useAuthStore()
 const kb = useKBStore()
 const chat = useChatStore()
-const tab = ref('dash')
+// 从顶部模型徽标进入时，直接定位到「模型配置」分区
+const tab = ref(auth.adminTab || 'dash')
 const sections = [
   { key: 'dash', name: '概览', icon: '📊' },
   { key: 'users', name: '用户管理', icon: '👤' },
+  { key: 'kb', name: '知识库管理', icon: '🗂️' },
+  { key: 'docs', name: '文档管理', icon: '📄' },
+  { key: 'model', name: '模型配置', icon: '🤖' },
+  { key: 'skills', name: '技能管理', icon: '🧩' },
+  { key: 'mcp', name: 'MCP 管理', icon: '🔌' },
   { key: 'perm', name: '权限管理', icon: '🔑' },
   { key: 'fb', name: '用户反馈', icon: '💬' },
   { key: 'notif', name: '系统通知', icon: '🔔' },
@@ -195,6 +378,135 @@ const csv = ref(''); const batchResult = ref('')
 async function loadUsers() {
   try { const { data } = await getAdminUsers(); if (data.code === 200) users.value = data.data } catch (e) { }
 }
+
+// ── 知识库管理 ──
+const newKbName = ref(''); const kbMsg = ref('')
+async function createKb() {
+  if (!newKbName.value.trim()) return
+  try {
+    const { data } = await createKB(newKbName.value.trim())
+    kbMsg.value = data.code === 200 ? '创建成功' : (data.message || '创建失败')
+    if (data.code === 200) { newKbName.value = ''; await kb.load() }
+  } catch (e) { kbMsg.value = '创建失败' }
+}
+async function removeKb(k) {
+  if (!confirm(`确定删除知识库「${k.name}」及其全部文档？`)) return
+  try {
+    const { data } = await deleteKB(k.id)
+    if (data.code !== 200) alert(data.message || '删除失败')
+    await kb.load()
+    if (docsKbId.value === String(k.id)) { docsKbId.value = ''; docList.value = [] }
+  } catch (e) { }
+}
+function openDocs(k) {
+  docsKbId.value = String(k.id)
+  tab.value = 'docs'
+  loadDocs()
+}
+
+// ── 文档管理 ──
+const docsKbId = ref(''); const docList = ref([])
+async function loadDocs() {
+  if (!docsKbId.value) { docList.value = []; return }
+  try {
+    const { data } = await getDocs(docsKbId.value)
+    if (data.code === 200) docList.value = data.data
+  } catch (e) { }
+}
+async function removeDoc(d) {
+  if (!confirm(`确定删除文档「${d.title}」？`)) return
+  try {
+    const { data } = await deleteDoc(d.id)
+    if (data.code !== 200) alert(data.message || '删除失败')
+    await loadDocs()
+  } catch (e) { }
+}
+
+// ── 模型配置 ──
+const mcModel = ref(''); const mcBaseUrl = ref(''); const mcApiKey = ref('')
+const mcTemp = ref(0.3); const mcMaxTokens = ref(8192); const mcKeyPlaceholder = ref('')
+const mcMsg = ref(''); const mcOk = ref(true)
+async function loadModelConfig() {
+  try {
+    const { data } = await getModelConfig()
+    if (data.code === 200) {
+      mcModel.value = data.data.modelName || ''
+      mcBaseUrl.value = data.data.baseUrl || ''
+      mcApiKey.value = ''
+      mcTemp.value = data.data.temperature ?? 0.3
+      mcMaxTokens.value = data.data.maxTokens ?? 8192
+      mcKeyPlaceholder.value = data.data.apiKey
+        ? `已配置（${data.data.apiKey}），留空保持不变`
+        : '未配置（使用 Agent 环境变量）'
+    }
+  } catch (e) { }
+}
+async function saveModelConfig() {
+  try {
+    const payload = {
+      modelName: mcModel.value.trim(),
+      baseUrl: mcBaseUrl.value.trim(),
+      apiKey: mcApiKey.value.trim(),
+      temperature: mcTemp.value === '' ? null : Number(mcTemp.value),
+      maxTokens: mcMaxTokens.value === '' ? null : Number(mcMaxTokens.value)
+    }
+    const { data } = await updateModelConfig(payload)
+    mcOk.value = data.code === 200
+    mcMsg.value = data.message || (data.code === 200 ? '已保存' : '保存失败')
+    if (data.code === 200) await loadModelConfig()
+  } catch (e) { mcOk.value = false; mcMsg.value = '保存失败' }
+}
+
+// ── 技能管理 ──
+const skills = ref([])
+async function loadSkills() {
+  try { const { data } = await getSkills(); if (data.code === 200) skills.value = data.data } catch (e) { }
+}
+async function toggleSkill(s) {
+  try {
+    const { data } = await updateSkill(s.name, { enabled: !s.enabled })
+    if (data.code === 200) await loadSkills()
+    else alert(data.message || '操作失败')
+  } catch (e) { }
+}
+
+// ── MCP 管理 ──
+const mcps = ref([])
+const mcpName = ref(''); const mcpUrl = ref(''); const mcpDesc = ref('')
+const mcpMsg = ref(''); const mcpOk = ref(true)
+async function loadMcps() {
+  try { const { data } = await getMcpServers(); if (data.code === 200) mcps.value = data.data } catch (e) { }
+}
+async function addMcp() {
+  if (!mcpName.value.trim() || !mcpUrl.value.trim()) {
+    mcpOk.value = false; mcpMsg.value = '名称与地址必填'; return
+  }
+  try {
+    const { data } = await createMcpServer({
+      name: mcpName.value.trim(), url: mcpUrl.value.trim(),
+      description: mcpDesc.value.trim() || null
+    })
+    mcpOk.value = data.code === 200
+    mcpMsg.value = data.message || (data.code === 200 ? '已添加' : '添加失败')
+    if (data.code === 200) { mcpName.value = ''; mcpUrl.value = ''; mcpDesc.value = ''; await loadMcps() }
+  } catch (e) { mcpOk.value = false; mcpMsg.value = '添加失败' }
+}
+async function toggleMcp(m) {
+  try {
+    const { data } = await updateMcpServer(m.id, { enabled: !m.enabled })
+    if (data.code === 200) await loadMcps()
+    else alert(data.message || '操作失败')
+  } catch (e) { }
+}
+async function removeMcp(m) {
+  if (!confirm(`确定删除 MCP 服务器「${m.name}」？`)) return
+  try {
+    const { data } = await deleteMcpServer(m.id)
+    if (data.code !== 200) alert(data.message || '删除失败')
+    await loadMcps()
+  } catch (e) { }
+}
+
 async function createOne() {
   if (!nu.value || !np.value) return
   try {
@@ -275,6 +587,11 @@ const fmtTime = (t) => t ? String(t).replace('T', ' ').substring(0, 19) : ''
 watch(tab, (t) => {
   if (t === 'dash') loadDash()
   else if (t === 'users') loadUsers()
+  else if (t === 'kb') kb.load()
+  else if (t === 'docs') { if (!kb.kbs.length) kb.load(); loadDocs() }
+  else if (t === 'model') loadModelConfig()
+  else if (t === 'skills') loadSkills()
+  else if (t === 'mcp') loadMcps()
   else if (t === 'fb') loadFeedback()
   else if (t === 'notif') loadNotifs()
   else if (t === 'audit') loadAudit()

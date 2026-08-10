@@ -8,6 +8,10 @@ import com.ka.dto.RagQueryResponse;
 import com.ka.entity.KnowledgeBase;
 import com.ka.repository.KnowledgeBaseRepository;
 import com.ka.service.AuditLogService;
+import com.ka.service.LlmCostService;
+import com.ka.service.ModelConfigService;
+import com.ka.service.McpServerService;
+import com.ka.service.SkillService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PreDestroy;
 import jakarta.servlet.http.HttpServletRequest;
@@ -41,9 +45,16 @@ public class RagController {
 
     private final AgentClient agentClient;
     private final KnowledgeBaseRepository kbRepository;
+    private final ModelConfigService modelConfigService;
+    private final SkillService skillService;
+    private final McpServerService mcpServerService;
+    private final LlmCostService llmCostService;
 
     @Value("${agent.base-url}")
     private String agentBaseUrl;
+
+    @Value("${agent.api-key:}")
+    private String agentApiKey;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClient httpClient = HttpClient.newBuilder()
@@ -74,9 +85,12 @@ public class RagController {
     public ApiResponse<RagQueryResponse> query(@Valid @RequestBody RagQueryRequest request,
                                                 HttpServletRequest httpReq) {
         validateKbAccess(request.getKbNames());
+        Map<String, Object> llmConfig = modelConfigService.asRequestConfig();
+        List<String> skills = skillService.listEnabledNames();
+        List<Map<String, String>> mcpServers = mcpServerService.listEnabledForAgent();
         AgentClient.AgentQueryResponse agentResp = agentClient.ragQuery(
                 request.getQuestion(), request.getKbNames(),
-                request.getHistory(), request.getSessionId());
+                request.getHistory(), request.getSessionId(), llmConfig, skills, mcpServers);
 
         RagQueryResponse response = RagQueryResponse.builder()
                 .success(agentResp.isSuccess())
@@ -85,6 +99,10 @@ public class RagController {
                 .metrics(agentResp.getMetrics())
                 .inputTokens(agentResp.getInputTokens())
                 .outputTokens(agentResp.getOutputTokens())
+                .cacheHitTokens(agentResp.getCacheHitTokens())
+                .cacheMissTokens(agentResp.getCacheMissTokens())
+                .cost(llmCostService.estimate(modelConfigService.getOrCreate().getModelName(),
+                        agentResp.getInputTokens(), agentResp.getOutputTokens()))
                 .build();
 
         AuditLogService.log("QUERY", null, null,
@@ -109,6 +127,18 @@ public class RagController {
         body.put("kb_names", request.getKbNames() != null ? request.getKbNames() : List.of());
         body.put("history", request.getHistory() != null ? request.getHistory() : List.of());
         body.put("session_id", request.getSessionId() != null ? request.getSessionId() : "");
+        Map<String, Object> llmConfig = modelConfigService.asRequestConfig();
+        if (!llmConfig.isEmpty()) {
+            body.put("llm_config", llmConfig);
+        }
+        List<String> skills = skillService.listEnabledNames();
+        List<Map<String, String>> mcpServers = mcpServerService.listEnabledForAgent();
+        if (!skills.isEmpty()) {
+            body.put("skills", skills);
+        }
+        if (!mcpServers.isEmpty()) {
+            body.put("mcp_servers", mcpServers);
+        }
 
         String baseUrl = agentBaseUrl != null && agentBaseUrl.endsWith("/")
                 ? agentBaseUrl.substring(0, agentBaseUrl.length() - 1) : agentBaseUrl;
@@ -116,12 +146,16 @@ public class RagController {
         // 异步线程读取 Agent 的 SSE 响应流，逐行透传给前端
         CompletableFuture.runAsync(() -> {
             try {
-                HttpRequest httpReq = HttpRequest.newBuilder(URI.create(baseUrl + "/api/v1/rag/query/stream"))
+                HttpRequest.Builder reqBuilder = HttpRequest.newBuilder(URI.create(baseUrl + "/api/v1/rag/query/stream"))
                         .timeout(Duration.ofSeconds(120))
                         .header("Content-Type", "application/json")
                         .header("Accept", "text/event-stream")
-                        .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)))
-                        .build();
+                        .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(body)));
+                // P0：Agent 内部鉴权（与 AgentClient 一致），漏掉会导致流式 401
+                if (agentApiKey != null && !agentApiKey.isBlank()) {
+                    reqBuilder.header("X-KA-API-Key", agentApiKey);
+                }
+                HttpRequest httpReq = reqBuilder.build();
                 HttpResponse<Stream<String>> resp = httpClient.send(httpReq, HttpResponse.BodyHandlers.ofLines());
                 try (Stream<String> lines = resp.body()) {
                     lines.forEach(line -> {
@@ -164,8 +198,9 @@ public class RagController {
     @PostMapping("/search")
     public ApiResponse<RagQueryResponse> search(@Valid @RequestBody RagQueryRequest request) {
         validateKbAccess(request.getKbNames());
+        Map<String, Object> llmConfig = modelConfigService.asRequestConfig();
         AgentClient.AgentQueryResponse agentResp = agentClient.ragSearch(
-                request.getQuestion(), request.getKbNames());
+                request.getQuestion(), request.getKbNames(), llmConfig);
 
         RagQueryResponse response = RagQueryResponse.builder()
                 .success(agentResp.isSuccess())

@@ -181,6 +181,41 @@ curl -X POST http://localhost:8000/api/v1/rag/query \
   -d '{"question":"系统采用什么架构？","kb_names":["技术文档库"]}'
 ```
 
+### 模型配置接口（管理员）
+
+管理后台「模型配置」页可在线修改大模型（模型名 / 接口地址 / API Key / Temperature / Max Tokens），保存后对后续问答立即生效；留空字段沿用 Agent 环境变量，API Key 只掩码显示、留空不覆盖。
+
+```bash
+# 获取当前配置（API Key 为掩码值）
+curl http://localhost:8080/api/admin/model-config \
+  -H "Authorization: Bearer <token>"
+
+# 更新配置
+curl -X PUT http://localhost:8080/api/admin/model-config \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"modelName":"deepseek-v4-flash","baseUrl":"https://api.deepseek.com","apiKey":"","temperature":0.4,"maxTokens":4096}'
+```
+
+### 技能与 MCP 管理（管理员）
+
+管理后台「技能管理」可启用/停用内置技能（`get_current_time` / `calculate` / `web_search` / `url_fetch` / `make_chart` 等 12 个），停用后 LLM 不再获得该工具。
+
+「MCP 管理」可增删改查 MCP 服务器（Streamable HTTP / SSE 端点）。Agent 通过官方 `mcp` SDK 自动发现服务器工具，并以「服务器名__工具名」暴露给 LLM 调用；SDK 未安装、服务器不可达或调用失败时自动降级，不阻塞问答。配置随每次 RAG 请求下发，保存后立即生效。
+
+```bash
+# 技能列表 / 停用某个技能
+curl http://localhost:8080/api/admin/skills -H "Authorization: Bearer <token>"
+curl -X PUT http://localhost:8080/api/admin/skills/url_fetch \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"enabled":false}'
+
+# MCP 服务器 CRUD
+curl http://localhost:8080/api/admin/mcp-servers -H "Authorization: Bearer <token>"
+curl -X POST http://localhost:8080/api/admin/mcp-servers \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"name":"weather","url":"http://localhost:9000/mcp","enabled":true}'
+```
+
 ## 项目结构
 
 ```
@@ -258,8 +293,8 @@ g:\Knowledge Agent/
 
 ```
 1. MySQL 读取文档  → fetch_documents(kb_id)
-2. 文本分块        → chunk_text(text, 512, 64)
-3. BGE-M3 向量化   → embedder.encode_documents(chunks)
+2. 原文分块        → 中英双语 token 估算分块（默认 450 token + 60 token 重叠，带章节上下文）
+3. 向量化          → embedder.encode_documents(chunks)
 4. Milvus 写入     → collection.insert(embeddings)
 5. 创建索引        → IVF_FLAT + nlist=128
 6. 更新 chunk_count → MySQL UPDATE

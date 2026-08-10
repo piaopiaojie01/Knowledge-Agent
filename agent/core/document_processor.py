@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
 from openai import OpenAI
 from config import settings
+from core.text_utils import detect_lang, estimate_tokens
 
 logger = logging.getLogger(__name__)
 
@@ -73,10 +74,143 @@ Output JSON array (no markdown code blocks):
 Output only JSON array, nothing else:"""
 
 
-def detect_lang(text: str) -> str:
-    """检测文档语言：zh/en"""
-    cn = sum(1 for c in text[:2000] if '\u4e00' <= c <= '\u9fff')
-    return "zh" if cn > len(text[:2000]) * 0.15 else "en"
+def _heading_prefix(headings) -> str:
+    """把父标题链拼成 Markdown 前缀（保证分块自带章节上下文）"""
+    if not headings:
+        return ""
+    return "\n".join(f"{'#' * lv} {t}" for lv, t in headings) + "\n"
+
+
+def _split_long_unit(content: str, lang: str, chunk_tokens: int, overlap_tokens: int) -> List[str]:
+    """超长单元：按句子组装 + 相邻块重叠；单句仍超限按字符窗口硬切，不截断丢内容"""
+    sentences = [s.strip() for s in re.split(r'(?<=[。！？!?；;])\s*|\n+', content) if s.strip()]
+    if not sentences:
+        sentences = [content]
+    sep = " " if lang == "en" else "\n"
+    result = []
+    buf, buf_t = [], 0
+    for s in sentences:
+        t = estimate_tokens(s, lang)
+        if buf and buf_t + t > chunk_tokens:
+            result.append(sep.join(buf))
+            keep, kt = [], 0
+            for bs in reversed(buf):
+                bt = estimate_tokens(bs, lang)
+                if kt + bt > overlap_tokens:
+                    break
+                keep.insert(0, bs)
+                kt += bt
+            buf, buf_t = keep, kt
+        buf.append(s)
+        buf_t += t
+    if buf:
+        result.append(sep.join(buf))
+
+    # 单块仍超限（超长单句等）→ 按字符窗口 + 重叠硬切
+    rate = 1.5 if lang == "zh" else 0.25  # token/字符
+    window = max(int(chunk_tokens / rate), 1)
+    overlap_chars = min(int(overlap_tokens / rate), window - 1)
+    final = []
+    for r in result:
+        if estimate_tokens(r, lang) <= chunk_tokens:
+            final.append(r)
+            continue
+        i = 0
+        while i < len(r):
+            final.append(r[i:i + window])
+            if i + window >= len(r):
+                break
+            i += window - overlap_chars
+    return final
+
+
+def chunk_text(text: str, chunk_tokens: int | None = None,
+               overlap_tokens: int | None = None) -> List[str]:
+    """原文分块（中英自适应）：
+    - 按 token 估算对齐 embedding 模型上限（默认 450 token）
+    - 保留父标题链上下文；超长段落按句/窗口二次拆分并重叠，不截断丢内容
+    """
+    chunk_tokens = chunk_tokens or settings.chunk_tokens
+    overlap_tokens = overlap_tokens or settings.chunk_overlap_tokens
+
+    units = []
+    headings = []  # [(level, text)]
+    buf = []
+
+    def flush():
+        if buf:
+            units.append((list(headings), "\n".join(buf).strip()))
+            buf.clear()
+
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            flush()
+            continue
+        m = re.match(r'^(#{1,6})\s+(.*)$', s)
+        if m:
+            flush()
+            level = len(m.group(1))
+            headings = [h for h in headings if h[0] < level]
+            headings.append((level, m.group(2).strip()))
+            continue
+        buf.append(line)
+    flush()
+    if not units:
+        units = [([], text.strip())]
+
+    chunks = []
+    cur_headings = []
+    cur_parts = []
+    cur_tokens = 0
+
+    def finish():
+        nonlocal cur_parts, cur_tokens
+        if not cur_parts:
+            return
+        chunk = (_heading_prefix(cur_headings) + "\n\n".join(cur_parts)).strip()
+        if chunk:
+            chunks.append(chunk)
+        cur_parts = []
+        cur_tokens = 0
+
+    for headings, content in units:
+        if not content:
+            continue
+        lang = detect_lang(content)
+        unit_tokens = estimate_tokens(content, lang)
+        prefix_tokens = estimate_tokens(_heading_prefix(headings), lang)
+        if headings != cur_headings:
+            finish()
+            cur_headings = headings
+        if unit_tokens > chunk_tokens:
+            finish()
+            cur_headings = headings
+            for sub in _split_long_unit(content, lang, chunk_tokens, overlap_tokens):
+                chunk = (_heading_prefix(headings) + sub).strip()
+                if chunk:
+                    chunks.append(chunk)
+            continue
+        if cur_parts and cur_tokens + prefix_tokens + unit_tokens > chunk_tokens:
+            finish()
+            cur_headings = headings
+        cur_parts.append(content)
+        cur_tokens += unit_tokens
+    finish()
+
+    # Milvus content 字段上限 4096 的保护性硬切（保留全部内容）
+    max_chars = 3800
+    out = []
+    for c in chunks:
+        if len(c) <= max_chars:
+            out.append(c)
+            continue
+        lang = detect_lang(c)
+        rate = 1.5 if lang == "zh" else 0.25
+        window = int(chunk_tokens / rate)
+        for i in range(0, len(c), window):
+            out.append(c[i:i + window])
+    return out
 
 
 class DocumentProcessor:
@@ -103,80 +237,66 @@ class DocumentProcessor:
                 logger.warning(f"LLM call failed (attempt {attempt + 1}/3), retry in {wait}s: {e}")
                 time.sleep(wait)
 
-    def _split_sections(self, text: str, max_chars: int = 1200) -> List[str]:
-        """语义切分：优先按 ## 标题切，无标题则按段落 + 长度切"""
-        # 检测是否有 Markdown 标题
-        has_headers = bool(re.search(r'^#{1,3}\s+', text, re.MULTILINE))
-        if has_headers:
-            raw_chunks = re.split(r'\n(?=#{1,3}\s)', text)
-            chunks = []
-            for c in raw_chunks:
-                c = c.strip()
-                if not c:
-                    continue
-                if len(c) > max_chars * 3:
-                    sub = self._split_by_paragraphs(c, max_chars)
-                    chunks.extend(sub)
-                else:
-                    chunks.append(c)
-            return chunks if chunks else [text]
-        return self._split_by_paragraphs(text, max_chars)
-
-    def _split_by_paragraphs(self, text: str, max_chars: int) -> List[str]:
-        paragraphs = re.split(r"\n\s*\n", text)
-        chunks = []
-        buf = ""
-        for p in paragraphs:
-            p = p.strip()
-            if not p:
-                continue
-            if len(buf) + len(p) > max_chars and buf:
-                chunks.append(buf)
-                buf = p
-            else:
-                buf = buf + "\n" + p if buf else p
-        if buf:
-            chunks.append(buf)
-        return chunks
-
     def process(self, text: str, title: str, progress_cb=None) -> List[Dict[str, Any]]:
-        """主流程：文本 → 结构化 → QA → Milvus 行；progress_cb(done, total) 逐段回报进度"""
-        if not settings.deepseek_api_key:
-            return self._fallback_process(text, title)
+        """主流程：原文分块（中英自适应）→ 入库行；
+        KA_INGEST_QA_ENABLED=true 时额外生成问答对（默认关闭）。"""
+        chunks = chunk_text(text)
+        total = len(chunks)
+        if not settings.ingest_qa_enabled or not settings.deepseek_api_key:
+            rows = []
+            for i, c in enumerate(chunks):
+                rows.append(self._to_row(c, title))
+                if progress_cb:
+                    try:
+                        progress_cb(i + 1, total)
+                    except Exception:
+                        pass
+            return rows
 
-        # Step 1: 检测语言 + 切分
+        # QA 增强模式：每个分块生成问答对（保留原标题上下文）
         lang = detect_lang(text)
-        sections = self._split_sections(text, max_chars=2000 if lang == "en" else 1200)
         s_prompt = SECTION_PROMPT_EN if lang == "en" else SECTION_PROMPT
         q_prompt = QA_PROMPT_EN if lang == "en" else QA_PROMPT
-        logger.info(f"文档[{title}]: 检测语言={lang}, {len(sections)} 个段落")
+        logger.info(f"文档[{title}]: 检测语言={lang}, {len(chunks)} 个分块")
 
-        # 段间并发：OpenAI SDK 客户端线程安全；as_completed 在调用方单线程汇总，进度计数无需加锁
+        # 分块并发：OpenAI SDK 客户端线程安全
         workers = max(1, settings.ingest_llm_concurrency)
-        logger.info(f"QA 生成并发度: {workers}")
         all_qa = []
         done_count = 0
         with ThreadPoolExecutor(max_workers=workers) as pool:
             futures = {pool.submit(self._process_section, title, s_prompt, q_prompt, chunk, i)
-                       for i, chunk in enumerate(sections)}
+                       for i, chunk in enumerate(chunks)}
             for fut in as_completed(futures):
                 all_qa.extend(fut.result())
                 done_count += 1
                 if progress_cb:
                     try:
-                        progress_cb(done_count, len(sections))
+                        progress_cb(done_count, len(chunks))
                     except Exception:
                         pass  # 进度回报失败不影响入库主流程
 
         logger.info(f"文档[{title}]共生成 {len(all_qa)} 个 QA 对")
         return all_qa
 
+    def _to_row(self, chunk: str, title: str) -> Dict[str, Any]:
+        """原文分块 → 入库行（标题取块内首个标题行，无则用文档标题）"""
+        first_heading = next((l for l in chunk.splitlines() if l.startswith('#')), '')
+        t = re.sub(r'^#+\s*', '', first_heading).strip()
+        return {
+            "title": f"{title} · {t}" if t and t != title else title,
+            "content": chunk,
+            "source_content": chunk,
+            "module": first_heading,
+            "keywords": "",
+            "lang": detect_lang(chunk),
+        }
+
     def _process_section(self, title: str, s_prompt: str, q_prompt: str,
                          chunk: str, index: int) -> List[Dict[str, Any]]:
         """单段处理：结构化提取 → QA 生成（无共享状态，供线程池并发调用）"""
         try:
             # Step 2: 结构化提取
-            prompt = s_prompt.format(title=title, chunk=chunk[:2000])
+            prompt = s_prompt.format(title=title, chunk=chunk[:3000])
             raw = self._call_llm(prompt, max_tokens=512)
             info = self._parse_json(raw)
             # LLM 偶尔返回 JSON 数组而非对象，取首个 dict 兼容，避免整段被丢弃
@@ -192,7 +312,7 @@ class DocumentProcessor:
                 section_title=info.get("title", ""),
                 summary=info.get("summary", ""),
                 keywords=", ".join(info.get("keywords", [])),
-                text=info.get("content", chunk[:800])
+                text=info.get("content", chunk[:1200])
             )
             qa_raw = self._call_llm(qa_prompt, max_tokens=1024)
             qa_pairs = self._parse_json(qa_raw)
@@ -204,7 +324,7 @@ class DocumentProcessor:
                         result.append({
                             "title": qa["question"],
                             "content": qa.get("answer", ""),
-                            "source_content": info.get("content", chunk[:500]),
+                            "source_content": info.get("content", chunk[:1200]),
                             "module": info.get("module", ""),
                             "keywords": ", ".join(info.get("keywords", []))
                         })
@@ -232,13 +352,5 @@ class DocumentProcessor:
                 except json.JSONDecodeError:
                     pass
             return None
-
-    def _fallback_process(self, text: str, title: str) -> List[Dict[str, Any]]:
-        """无 API Key 时的回退：简单切片"""
-        sections = self._split_sections(text, max_chars=500)
-        return [{"title": f"{title} §{i+1}", "content": s,
-                 "source_content": s, "module": "", "keywords": ""}
-                for i, s in enumerate(sections)]
-
 
 processor = DocumentProcessor()

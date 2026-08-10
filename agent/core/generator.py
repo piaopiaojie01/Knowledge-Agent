@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Tuple, Iterator
 import json
 from openai import OpenAI
 from config import settings
-from .skills import TOOLS, execute_tool
+from .skills import TOOLS, build_tools, execute_tool, is_builtin_tool
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +80,26 @@ def _is_chart_request(query: str) -> bool:
     ql = query.lower()
     return any(kw in ql for kw in settings.chart_keywords)
 
+
+def _effective_llm(llm_config=None) -> dict:
+    """合并管理后台下发配置与本地环境变量，返回实际生效的模型参数"""
+    if not llm_config:
+        return {
+            "model": settings.deepseek_model,
+            "base_url": settings.deepseek_base_url,
+            "api_key": settings.deepseek_api_key,
+            "temperature": 0.3,
+            "max_tokens": settings.max_tokens,
+        }
+    return {
+        "model": llm_config.model or settings.deepseek_model,
+        "base_url": llm_config.base_url or settings.deepseek_base_url,
+        "api_key": llm_config.api_key or settings.deepseek_api_key,
+        "temperature": llm_config.temperature if llm_config.temperature is not None else 0.3,
+        "max_tokens": llm_config.max_tokens or settings.max_tokens,
+    }
+
+
 def _force_chart(query: str) -> str:
     """从 query 提取数据预生成图表；数据质量不够则返回空（交 LLM tool calling）"""
     from .skills import _make_chart
@@ -126,10 +146,25 @@ class Generator:
         self.model = settings.deepseek_model
         # 最近一次 generate_stream 的输入 token 数（与非流式 generate 同口径，全量 messages）
         self.last_input_tokens = 0
+        # 最近一次调用的提示词缓存命中/未命中 token（DeepSeek usage）
+        self.last_cache_hit = 0
+        self.last_cache_miss = 0
+
+    def _apply_usage(self, usage) -> None:
+        """从 LLM usage 中提取缓存命中/未命中 token"""
+        if usage is None:
+            return
+        hit = getattr(usage, "prompt_cache_hit_tokens", None)
+        miss = getattr(usage, "prompt_cache_miss_tokens", None)
+        if hit is not None:
+            self.last_cache_hit = int(hit)
+        if miss is not None:
+            self.last_cache_miss = int(miss)
 
     def _prepare_messages(self, query: str, sources: List[Dict[str, Any]],
                           history: List[Dict[str, str]] = None,
-                          long_term_memory: str = "") -> Tuple[list, int, str, str]:
+                          long_term_memory: str = "",
+                          chart_allowed: bool = True) -> Tuple[list, int, str, str]:
         """构建发送给 LLM 的消息（generate / generate_stream 共用）
 
         返回 (messages, input_tokens, chart_result, user_message)
@@ -149,7 +184,7 @@ class Generator:
 
         # ── 图表前置生成（模拟 tool call 注入，LLM 感知为"自己调的工具"）──
         chart_result = ""
-        if _is_chart_request(query):
+        if chart_allowed and _is_chart_request(query):
             chart_result = _force_chart(query)
             if chart_result:
                 logger.info(f"模拟 tool call: make_chart for {query[:40]}...")
@@ -190,12 +225,20 @@ class Generator:
     def generate(self, query: str, sources: List[Dict[str, Any]],
                  history: List[Dict[str, str]] = None,
                  long_term_memory: str = "",
-                 stream: bool = False) -> Tuple[str, int, int]:
-        if not settings.deepseek_api_key:
+                 stream: bool = False,
+                 llm_config=None,
+                 skill_names=None,
+                 mcp_servers=None) -> Tuple[str, int, int]:
+        eff = _effective_llm(llm_config)
+        if not eff["api_key"]:
             return self._mock_generate(query, sources), 0, 0
+        client = self.client if llm_config is None else OpenAI(
+            api_key=eff["api_key"], base_url=eff["base_url"])
+        tools = build_tools(skill_names, mcp_servers)
+        chart_allowed = (skill_names is None) or ("make_chart" in skill_names)
 
         messages, input_tokens, chart_result, user_message = self._prepare_messages(
-            query, sources, history, long_term_memory)
+            query, sources, history, long_term_memory, chart_allowed)
 
         try:
             # ── Tool Calling 循环（最多 5 轮）──
@@ -207,11 +250,11 @@ class Generator:
                 last_err = None
                 for attempt in range(3):
                     try:
-                        response = self.client.chat.completions.create(
-                            model=self.model,
+                        response = client.chat.completions.create(
+                            model=eff["model"],
                             messages=messages,
-                            tools=TOOLS,
-                            temperature=0.3, max_tokens=settings.max_tokens)
+                            tools=tools,
+                            temperature=eff["temperature"], max_tokens=eff["max_tokens"])
                         break
                     except Exception as e:
                         last_err = e
@@ -221,6 +264,7 @@ class Generator:
                 if response is None:
                     raise last_err
                 msg = response.choices[0].message
+                self._apply_usage(getattr(response, "usage", None))
                 if msg.tool_calls:
                     tool_calls_made += 1
                     for tc in msg.tool_calls:
@@ -236,7 +280,11 @@ class Generator:
                             continue
                         # 工具执行失败 → 错误反馈给 LLM 重试，不再中断整个生成
                         try:
-                            result = execute_tool(name, args)
+                            if is_builtin_tool(name):
+                                result = execute_tool(name, args)
+                            else:
+                                from core.mcp_manager import mcp_manager
+                                result = mcp_manager.call_tool(name, args)
                         except Exception as e:
                             logger.warning(f"工具执行失败 {name}({args}): {e}")
                             result = f"错误：工具 {name} 执行失败({e})，请检查参数后重试，或改用文字回答。"
@@ -263,12 +311,13 @@ class Generator:
                 return answer, input_tokens, output_tokens
             # 5 轮工具调用耗尽：再做一次不带 tools 的调用，让 LLM 基于已有工具结果直接作答
             try:
-                response = self.client.chat.completions.create(
-                    model=self.model,
+                response = client.chat.completions.create(
+                    model=eff["model"],
                     messages=messages,
-                    temperature=0.3, max_tokens=settings.max_tokens)
+                    temperature=eff["temperature"], max_tokens=eff["max_tokens"])
                 answer = response.choices[0].message.content or ""
                 if answer:
+                    self._apply_usage(getattr(response, "usage", None))
                     return answer, input_tokens, count_tokens(answer)
             except Exception as e:
                 logger.warning(f"工具耗尽后的最终调用失败: {e}")
@@ -279,19 +328,27 @@ class Generator:
 
     def generate_stream(self, query: str, sources: List[Dict[str, Any]],
                         history: List[Dict[str, str]] = None,
-                        long_term_memory: str = "") -> Iterator[str]:
-        """流式生成回答，逐块 yield 文本增量
+                        long_term_memory: str = "",
+                        llm_config=None,
+                        skill_names=None,
+                        mcp_servers=None) -> Iterator[str]:
+        """流式生成回答，逐块 yield 文本增量；支持流式工具调用（skills / MCP）
 
         - 图表预生成成功 → 模拟 tool call 已在 messages 里，LLM 正常引用
-        - 图表预生成失败（__NEED_TOOL__）→ 流式无法调工具，回退到带
-          tool calling 的非流式 generate()，一次性 yield 完整答案
+        - 图表预生成失败（__NEED_TOOL__）→ 回退到带 tool calling 的非流式 generate()
+        - 其他工具（新闻/搜索/天气/MCP 等）：流式收集 tool_call → 执行 → 继续流式输出
         """
-        if not settings.deepseek_api_key:
+        eff = _effective_llm(llm_config)
+        if not eff["api_key"]:
             yield self._mock_generate(query, sources)
             return
+        client = self.client if llm_config is None else OpenAI(
+            api_key=eff["api_key"], base_url=eff["base_url"])
+        tools = build_tools(skill_names, mcp_servers)
+        chart_allowed = (skill_names is None) or ("make_chart" in skill_names)
 
         messages, input_tokens, chart_result, _ = self._prepare_messages(
-            query, sources, history, long_term_memory)
+            query, sources, history, long_term_memory, chart_allowed)
         # 与非流式 generate 同口径：全量 messages 的 token 数，供路由层 final 事件使用
         self.last_input_tokens = input_tokens
 
@@ -300,7 +357,9 @@ class Generator:
         if chart_result == "__NEED_TOOL__":
             logger.info(f"流式图表请求回退非流式 tool calling: {query[:40]}...")
             try:
-                answer, _, _ = self.generate(query, sources, history, long_term_memory)
+                answer, _, _ = self.generate(
+                    query, sources, history, long_term_memory,
+                    llm_config=llm_config, skill_names=skill_names, mcp_servers=mcp_servers)
             except Exception as e:
                 logger.error(f"图表非流式回退失败: {e}")
                 answer = self._mock_generate(query, sources)
@@ -309,18 +368,86 @@ class Generator:
 
         produced = False
         try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=0.3, max_tokens=settings.max_tokens,
-                stream=True)
+            for _round in range(5):
+                kwargs = {
+                    "model": eff["model"],
+                    "messages": messages,
+                    "temperature": eff["temperature"],
+                    "max_tokens": eff["max_tokens"],
+                    "stream": True,
+                    "stream_options": {"include_usage": True},
+                }
+                if tools:
+                    kwargs["tools"] = tools
+                stream = client.chat.completions.create(**kwargs)
+                tool_calls = {}
+                had_tool_calls = False
+                for chunk in stream:
+                    if not chunk.choices:
+                        continue
+                    delta = getattr(chunk.choices[0], "delta", None)
+                    if delta is None:
+                        continue
+                    if getattr(delta, "content", None):
+                        produced = True
+                        yield delta.content
+                    for tc in getattr(delta, "tool_calls", None) or []:
+                        had_tool_calls = True
+                        slot = tool_calls.setdefault(
+                            tc.index, {"id": "", "name": "", "arguments": ""})
+                        if getattr(tc, "id", None):
+                            slot["id"] = tc.id
+                        fn = getattr(tc, "function", None)
+                        if fn:
+                            if getattr(fn, "name", None):
+                                slot["name"] += fn.name
+                            if getattr(fn, "arguments", None):
+                                slot["arguments"] += fn.arguments
+                    usage = getattr(chunk, "usage", None)
+                    if usage is not None:
+                        self._apply_usage(usage)
+                if not had_tool_calls:
+                    return  # 正常流式完成
+                # 流式工具调用：执行并把结果追加到消息，下一轮继续流式
+                assistant_calls = [
+                    {"id": s["id"], "type": "function",
+                     "function": {"name": s["name"], "arguments": s["arguments"]}}
+                    for s in tool_calls.values()]
+                messages.append({"role": "assistant", "content": None,
+                                 "tool_calls": assistant_calls})
+                for s in tool_calls.values():
+                    name = s["name"]
+                    try:
+                        args = json.loads(s["arguments"] or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                        result = f"错误：工具参数 JSON 解析失败，请修正后重新调用。"
+                    else:
+                        try:
+                            if is_builtin_tool(name):
+                                result = execute_tool(name, args)
+                            else:
+                                from core.mcp_manager import mcp_manager
+                                result = mcp_manager.call_tool(name, args)
+                        except Exception as e:
+                            logger.warning(f"流式工具执行失败 {name}({args}): {e}")
+                            result = f"错误：工具 {name} 执行失败({e})，请检查参数后重试。"
+                    logger.info(f"Skill 调用(流式): {name}({args}) → {len(result)} 字符")
+                    messages.append({"role": "tool", "tool_call_id": s["id"],
+                                     "content": result})
+            # 5 轮工具调用耗尽：最后做一次不带 tools 的流式收尾
+            kwargs.pop("tools", None)
+            stream = client.chat.completions.create(**kwargs)
             for chunk in stream:
                 if not chunk.choices:
                     continue
-                delta = chunk.choices[0].delta.content
-                if delta:
+                delta = getattr(chunk.choices[0], "delta", None)
+                if delta and getattr(delta, "content", None):
                     produced = True
-                    yield delta
+                    yield delta.content
+                usage = getattr(chunk, "usage", None)
+                if usage is not None:
+                    self._apply_usage(usage)
         except Exception as e:
             logger.error(f"LLM 流式生成失败: {e}")
             # 已产出 delta：无法再拼接 mock 兜底（会接在残句后），抛给路由层发 error 事件

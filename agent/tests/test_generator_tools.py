@@ -74,7 +74,7 @@ def test_tool_execution_error_fed_back(gen, monkeypatch):
     def create(**k):
         calls.append(k)
         if len(calls) == 1:
-            return _resp(tool_calls=[_tc("some_tool", "{}")])
+            return _resp(tool_calls=[_tc("calculate", "{}")])
         return _resp(content="修正后的答案")
 
     gen.client = _make_client(create)
@@ -153,3 +153,47 @@ def test_prepare_messages_gated_by_source_threshold(gen):
     _, _, _, msg_low = gen._prepare_messages("问题", low)
     assert "参考资料" in msg_high
     assert "未找到高质量参考资料" in msg_low
+
+
+def test_generate_uses_llm_config_override(gen, monkeypatch):
+    # 验证管理后台下发的 llm_config 覆盖模型名/接口/密钥/temperature/max_tokens
+    calls = {}
+
+    class FakeCompletions:
+        def __init__(self):
+            self.create = lambda **k: calls.update(k) or _resp(content="覆盖模型回答")
+
+    class FakeChat:
+        completions = FakeCompletions()
+
+    class FakeOpenAI:
+        def __init__(self, **kw):
+            calls["client_kwargs"] = kw
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(cg, "OpenAI", FakeOpenAI)
+    cfg = SimpleNamespace(model="gpt-x", base_url="http://llm.local",
+                          api_key="k-abc", temperature=0.1, max_tokens=100)
+
+    answer, _, _ = gen.generate("你好", [], llm_config=cfg)
+
+    assert answer == "覆盖模型回答"
+    assert calls["model"] == "gpt-x"
+    assert calls["temperature"] == 0.1
+    assert calls["max_tokens"] == 100
+    assert calls["client_kwargs"]["base_url"] == "http://llm.local"
+    assert calls["client_kwargs"]["api_key"] == "k-abc"
+
+
+def test_generate_captures_cache_usage(gen):
+    # 验证从 DeepSeek usage 中提取缓存命中/未命中 token
+    def create(**k):
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content="ok", tool_calls=None))],
+            usage=SimpleNamespace(prompt_cache_hit_tokens=120, prompt_cache_miss_tokens=80))
+
+    gen.client = _make_client(create)
+    gen.generate("你好", [])
+
+    assert gen.last_cache_hit == 120
+    assert gen.last_cache_miss == 80

@@ -73,7 +73,14 @@ public class SecurityConfig {
     public CorsConfigurationSource corsConfigurationSource() {
         List<String> allowedOrigins = constants.getCorsOrigins();
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(allowedOrigins);
+        if (constants.isCorsAllowTrycloudflare()) {
+            // 演示专用：兼容 Cloudflare Quick Tunnel 的随机子域名（普通白名单不支持通配，用 pattern）
+            List<String> patterns = new java.util.ArrayList<>(allowedOrigins);
+            patterns.add("https://*.trycloudflare.com");
+            config.setAllowedOriginPatterns(patterns);
+        } else {
+            config.setAllowedOrigins(allowedOrigins);
+        }
         config.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
         config.setAllowedHeaders(Arrays.asList("Authorization", "Content-Type", "X-Requested-With"));
         config.setAllowCredentials(true);

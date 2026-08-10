@@ -6,6 +6,11 @@
       <div class="messages" ref="msgContainer" v-show="chat.currentTab === 'chat'">
         <div v-for="m in chat.messages" :key="m.id" :class="['msg', m.role]">
           <div v-html="renderContent(m)"></div>
+          <div v-if="m.role === 'agent' && (m.inputTokens || m.outputTokens || m.cacheHit !== undefined || m.cacheMiss !== undefined)"
+            class="msg-meta">
+            入 {{ m.inputTokens ?? 0 }} · 出 {{ m.outputTokens ?? 0 }}
+            <template v-if="m.cacheHit !== undefined || m.cacheMiss !== undefined"> · 缓存命中 {{ cacheRate(m) }}</template>
+          </div>
           <div v-if="m.sources && m.sources.length" class="src-block">
             <div class="src-head">参考来源</div>
             <div v-for="(s, i) in m.sources" :key="(s.title || 'src') + '-' + i" class="src-item">
@@ -125,6 +130,13 @@ function renderContent(m) {
   const html = DOMPurify.sanitize(marked.parse(text))
   renderCache.set(m.id, { raw: m.content, html })
   return html
+}
+
+function cacheRate(m) {
+  const hit = Number(m.cacheHit) || 0
+  const miss = Number(m.cacheMiss) || 0
+  if (!hit && !miss) return '—'
+  return Math.round(hit / (hit + miss) * 100) + '%'
 }
 
 function isErrorMsg(m) {

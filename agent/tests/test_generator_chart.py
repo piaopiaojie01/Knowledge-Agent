@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import core.generator as cg
 import core.skills as skills
 from config import settings
 from core.generator import Generator, _is_chart_request, _force_chart
@@ -15,6 +16,14 @@ def _make_client(create_fn):
 
 def _chunk(text):
     return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=text))])
+
+
+def _tc_chunk(index, id=None, name=None, arguments=None):
+    fn = None
+    if name is not None or arguments is not None:
+        fn = SimpleNamespace(name=name, arguments=arguments)
+    return SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+        content=None, tool_calls=[SimpleNamespace(index=index, id=id, function=fn)]))])
 
 
 @pytest.fixture
@@ -116,3 +125,31 @@ def test_stream_need_tool_falls_back_to_nonstream(api_key, monkeypatch):
     out = list(g.generate_stream("画个图", []))  # 无数字 → _force_chart 返回空 → __NEED_TOOL__
     assert out == ["完整答案"]
     assert len(calls) == 1
+
+
+def test_stream_executes_tool_then_continues(api_key, monkeypatch):
+    # 验证流式路径支持工具调用：收集 tool_call → 执行 → 继续流式输出
+    monkeypatch.setattr(cg, "execute_tool", lambda n, a: f"新闻结果:{a.get('topic')}")
+    calls = []
+
+    def create(**k):
+        calls.append(k)
+        if len(calls) == 1:
+            def gen1():
+                yield _tc_chunk(0, id="c1", name="news_headlines", arguments='{"topic":')
+                yield _tc_chunk(0, arguments='"tech"}')
+            return gen1()
+
+        def gen2():
+            yield _chunk("新闻")
+            yield _chunk("来了")
+        return gen2()
+
+    g = Generator()
+    g.client = _make_client(create)
+
+    out = list(g.generate_stream("查一下科技新闻", []))
+
+    assert "".join(out) == "新闻来了"
+    tool_msgs = [m for m in calls[1]["messages"] if m.get("role") == "tool"]
+    assert any("新闻结果:tech" in m["content"] for m in tool_msgs)

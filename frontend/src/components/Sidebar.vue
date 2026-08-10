@@ -19,15 +19,18 @@
         <span>对话记录</span>
         <button class="btn-ghost btn-sm" @click="chat.newSession()">新建</button>
       </div>
-      <div v-for="s in chat.sessions" :key="s.sessionId"
-        :class="['conv-item', { active: s.sessionId === chat.sessionId }]">
-        <span class="conv-title" @click="chat.switchSession(s.sessionId)" :title="s.title">
-          {{ s.title || s.sessionId?.substring(0,16)+'…' }}
-        </span>
-        <span class="conv-actions">
-          <span class="rename" @click.stop="doRename(s.sessionId)" title="重命名">✎</span>
-          <span class="del" @click.stop="doDelete(s.sessionId)" title="删除">×</span>
-        </span>
+      <div v-for="g in sessionGroups" :key="g.label">
+        <div class="conv-date">{{ g.label }}</div>
+        <div v-for="s in g.items" :key="s.sessionId"
+          :class="['conv-item', { active: s.sessionId === chat.sessionId }]">
+          <span class="conv-title" @click="chat.switchSession(s.sessionId)" :title="s.title">
+            {{ s.title || s.sessionId?.substring(0,16)+'…' }}
+          </span>
+          <span class="conv-actions">
+            <span class="rename" @click.stop="doRename(s.sessionId)" title="重命名">✎</span>
+            <span class="del" @click.stop="doDelete(s.sessionId)" title="删除">×</span>
+          </span>
+        </div>
       </div>
     </div>
 
@@ -67,7 +70,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onUnmounted } from 'vue'
+import { ref, watch, computed, onUnmounted } from 'vue'
 import { useKBStore } from '../stores/kb'
 import { useChatStore } from '../stores/chat'
 import { uploadDoc, getDoc } from '../api'
@@ -77,6 +80,34 @@ const chat = useChatStore()
 const file = ref(null)
 const fileInput = ref(null)
 const isDragging = ref(false)
+
+// 会话按日期分组：今天 / 昨天 / 具体日期
+function dateLabel(t) {
+  if (!t) return '更早'
+  const d = new Date(t)
+  if (isNaN(d.getTime())) return '更早'
+  const now = new Date()
+  const startOfDay = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000)
+  if (diffDays === 0) return '今天'
+  if (diffDays === 1) return '昨天'
+  if (diffDays > 1 && diffDays < 7) return `${d.getMonth() + 1}月${d.getDate()}日`
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+const sessionGroups = computed(() => {
+  const groups = []
+  const byLabel = new Map()
+  for (const s of chat.sessions) {
+    const label = dateLabel(s.updatedAt)
+    if (!byLabel.has(label)) {
+      const items = []
+      byLabel.set(label, items)
+      groups.push({ label, items })
+    }
+    byLabel.get(label).push(s)
+  }
+  return groups
+})
 // 解析设备选择，持久化到 localStorage
 const parseDevice = ref(localStorage.getItem('parseDevice') || 'cpu')
 watch(parseDevice, v => localStorage.setItem('parseDevice', v))

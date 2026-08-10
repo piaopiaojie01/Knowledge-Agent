@@ -68,8 +68,12 @@ ka:
     - /favicon.ico
   jwt-blacklist-enabled: true
   max-upload-mb: 100
+  cors-allow-trycloudflare: false
   chart-dir: ${KA_CHART_DIR:charts}
   icon-dir: ${KA_ICON_DIR:icons}
+  llm:
+    default-model: deepseek-v4-flash
+    default-base-url: https://api.deepseek.com
   login-max-failures: 5
   login-lock-minutes: 30
   audit-retention-days: 365

@@ -56,4 +56,7 @@ public class AppConstants {
 
     /** 上传文件大小上限（MB） */
     private long maxUploadMb = 100;
+
+    /** 演示专用：允许 *.trycloudflare.com 域名的浏览器跨域访问（默认关闭） */
+    private boolean corsAllowTrycloudflare = false;
 }

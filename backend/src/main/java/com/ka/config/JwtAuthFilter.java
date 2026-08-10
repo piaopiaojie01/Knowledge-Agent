@@ -60,6 +60,16 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         filterChain.doFilter(request, response);
     }
 
+    /**
+     * SSE（SseEmitter）异步分发时会重新进入过滤器链，而默认跳过异步分发会导致
+     * Spring Security 6 将第二次校验判为匿名并拒绝（AccessDenied）。
+     * 这里改为在异步分发时重新解析 JWT，保证长连接鉴权一致。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     private String extractToken(HttpServletRequest request) {
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {

@@ -30,8 +30,11 @@ class Settings(BaseSettings):
     min_score: float = 0.35
     # 有效来源判定阈值（基于未稀释的向量余弦分 vector_score）
     source_threshold: float = 0.62
-    chunk_size: int = 512
-    chunk_overlap: int = 64
+    # 分块：按 token 估算（中文 1.5 token/字、英文 0.25 token/字符），对齐 embedding 模型上限
+    chunk_tokens: int = 450
+    chunk_overlap_tokens: int = 60
+    # 入库 QA 增强（默认关闭：原文分块入库，保真可溯源；开启后每个分块额外生成问答对）
+    ingest_qa_enabled: bool = False
 
     redis_host: str = "localhost"
     redis_port: int = 6379

@@ -133,9 +133,9 @@ def _set_progress(doc_id: int, percent: int, message: str, total: int = 0, done:
 # ═════════════════════════════════
 
 def _do_ingest(req: IngestRequest, qa_lo: int = 0, qa_hi: int = 85):
-    """结构化/QA（qa_lo~qa_hi%）→ 向量化入库（~100%）。PDF 路径 QA 从 30% 起（前 30% 是解析）"""
+    """分块处理（qa_lo~qa_hi%）→ 向量化入库（~100%）。PDF 路径从 30% 起（前 30% 是解析）"""
     doc_id = req.doc_id
-    _set_progress(doc_id, qa_lo, "结构化处理中...")
+    _set_progress(doc_id, qa_lo, "文本分块处理中...")
     try:
         if not milvus_client.is_connected:
             _set_task(doc_id, {"status": "failed", "message": "Milvus not connected"}); return
@@ -148,7 +148,7 @@ def _do_ingest(req: IngestRequest, qa_lo: int = 0, qa_hi: int = 85):
             req.content, req.title,
             progress_cb=lambda d, t: _set_progress(
                 doc_id, int(qa_lo + (qa_hi - qa_lo) * d / max(t, 1)),
-                f"结构化/QA 生成中（{d}/{t}）...", t, d))
+                f"分块处理中（{d}/{t}）...", t, d))
         if not qa_pairs:
             _set_task(doc_id, {"status": "failed", "message": "未能从文档中提取到有效文本内容"}); return
 

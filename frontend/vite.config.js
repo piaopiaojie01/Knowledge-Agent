@@ -5,11 +5,13 @@ export default defineConfig({
   plugins: [vue()],
   server: {
     port: 9888,
+    // 内网穿透演示：允许 Cloudflare Quick Tunnel 域名访问
+    allowedHosts: ['.trycloudflare.com'],
+    // 后端地址可用环境变量覆盖：VITE_API_PROXY=http://localhost:8082 npm run dev
     proxy: {
-      // 后端默认 8080（application-dev.yml server.port）
-      '/api': 'http://localhost:8080',
-      '/charts': 'http://localhost:8080',
-      '/icons': 'http://localhost:8080'
+      '/api': process.env.VITE_API_PROXY || 'http://localhost:8080',
+      '/charts': process.env.VITE_API_PROXY || 'http://localhost:8080',
+      '/icons': process.env.VITE_API_PROXY || 'http://localhost:8080'
     }
   },
   build: {

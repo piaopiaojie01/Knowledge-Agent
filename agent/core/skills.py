@@ -314,12 +314,45 @@ def safe_calculate(expression: str):
 
     return eval_node(tree.body)
 
+
+def is_builtin_tool(name: str) -> bool:
+    """判断工具名是否为内置技能"""
+    return any(t["function"]["name"] == name for t in TOOLS)
+
+
+def build_tools(skill_names=None, mcp_servers=None) -> list:
+    """根据管理后台下发配置构建当前可用的工具定义列表。
+
+    skill_names 为 None 时保留全部内置技能（向后兼容）；
+    传入列表（可为空）时按启用名单过滤，并合并 MCP 工具。
+    """
+    tools = TOOLS
+    if skill_names is not None:
+        allowed = set(skill_names)
+        tools = [t for t in TOOLS if t["function"]["name"] in allowed]
+    if mcp_servers:
+        from core.mcp_manager import mcp_manager
+        tools = tools + mcp_manager.list_tools(mcp_servers)
+    return tools
+
+
 # ── RSS 源（BBC 在国内被封，改用 DuckDuckGo 新闻搜索兜底）──
 _RSS_FEEDS = {
-    "tech": "https://feeds.bbci.co.uk/news/technology/rss.xml",
-    "world": "https://feeds.bbci.co.uk/news/world/rss.xml",
-    "finance": "https://feeds.bbci.co.uk/news/business/rss.xml",
-    "default": "https://feeds.bbci.co.uk/news/rss.xml"
+    "tech": [
+        "https://www.36kr.com/feed",
+        "https://feeds.bbci.co.uk/news/technology/rss.xml",
+    ],
+    "world": [
+        "https://feeds.bbci.co.uk/news/world/rss.xml",
+    ],
+    "finance": [
+        "https://feeds.bbci.co.uk/news/business/rss.xml",
+        "https://www.36kr.com/feed",
+    ],
+    "default": [
+        "https://www.36kr.com/feed",
+        "https://feeds.bbci.co.uk/news/rss.xml",
+    ],
 }
 
 
@@ -497,20 +530,25 @@ def _gen_password(length: int) -> str:
 
 def _news(topic: str) -> str:
     """获取新闻头条（RSS + DuckDuckGo 兜底）"""
-    # 先尝试 RSS
-    feed_url = _RSS_FEEDS.get(topic, _RSS_FEEDS["default"])
-    try:
-        r = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=3)
-        items = re.findall(r'<item>.*?<title>(.*?)</title>.*?<description>(.*?)</description>.*?</item>',
-                          r.text, re.DOTALL)
-        if items:
-            topic_names = {"tech": "科技", "world": "国际", "finance": "财经", "default": "综合"}
-            lines = [f"📰 最新新闻 ({topic_names.get(topic, topic)}):"]
-            for title, desc in items[:8]:
-                title = re.sub(r'<[^>]+>', '', title).strip()
-                lines.append(f"• {title}")
-            return "\n".join(lines)
-    except Exception: pass
+    # 逐个尝试备用 RSS 源（BBC 在部分地区不可达时用 36kr 等兜底）
+    feed_urls = _RSS_FEEDS.get(topic, _RSS_FEEDS["default"])
+    if isinstance(feed_urls, str):
+        feed_urls = [feed_urls]
+    for feed_url in feed_urls:
+        try:
+            r = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+            r.raise_for_status()
+            items = re.findall(r'<item>.*?<title>(.*?)</title>.*?<description>(.*?)</description>.*?</item>',
+                              r.text, re.DOTALL)
+            if items:
+                topic_names = {"tech": "科技", "world": "国际", "finance": "财经", "default": "综合"}
+                lines = [f"📰 最新新闻 ({topic_names.get(topic, topic)}):"]
+                for title, desc in items[:8]:
+                    title = re.sub(r'<[^>]+>', '', title).strip()
+                    lines.append(f"• {title}")
+                return "\n".join(lines)
+        except Exception:
+            continue
     # 🚫 RSS 不可用 → 用 DuckDuckGo 搜索新闻关键词兜底
     try:
         topic_q = {"tech": "科技新闻", "world": "世界新闻", "finance": "财经新闻", "default": "今日新闻"}

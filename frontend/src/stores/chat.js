@@ -25,9 +25,8 @@ export const useChatStore = defineStore('chat', () => {
       addMsg('user', question)
       // 存库失败不应中断提问
       try { await saveMsg(sid, 'user', question, 0, 0) } catch (e) { console.warn('保存用户消息失败', e) }
-      // 首次发消息 → 用问题内容当标题
-      const s = sessions.value.find(s => s.sessionId === sid)
-      if (s) s.title = question.substring(0, 20) + (question.length > 20 ? '…' : '')
+      // 刷新会话列表：后端会以首条问题内容命名会话
+      try { await loadSessions() } catch (e) { }
       const kb = useKBStore()
       const kbNames = kb.kbs.filter(k => kb.selectedKbs.has(k.id)).map(k => k.name)
       // 流式：先插入空 agent 消息，delta 时增量追加（必须用数组里的 proxy 引用更新）
@@ -58,6 +57,10 @@ export const useChatStore = defineStore('chat', () => {
             const m = ensureMsg()
             m.sources = fin.sources || null
             m.done = true
+            m.inputTokens = fin.input_tokens || 0
+            m.outputTokens = fin.output_tokens || 0
+            m.cacheHit = fin.cache_hit_tokens
+            m.cacheMiss = fin.cache_miss_tokens
             await saveAnswer(m, fin)
           },
           onError(msg) {
@@ -86,7 +89,12 @@ export const useChatStore = defineStore('chat', () => {
       const { data } = await ragQuery(question, kbNames.length ? kbNames : null, chatHistory.value.slice(-50), sid)
       // 兼容后端返回：有 answer 即视为成功
       if (data.code === 200 && (data.data?.success || data.data?.answer)) {
-        addMsg('agent', data.data.answer, data.data.sources, 'assistant')
+        addMsg('agent', data.data.answer, data.data.sources, 'assistant', {
+          inputTokens: data.data.inputTokens || 0,
+          outputTokens: data.data.outputTokens || 0,
+          cacheHit: data.data.cacheHitTokens,
+          cacheMiss: data.data.cacheMissTokens
+        })
         await saveMsg(sid, 'assistant', data.data.answer, data.data.inputTokens || 0, data.data.outputTokens || 0)
         await refreshTokenStats()
       } else {
@@ -98,8 +106,8 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
-  function addMsg(role, content, sources, historyRole) {
-    messages.value.push({ role, content, sources, done: true, id: Date.now() + Math.random() })
+  function addMsg(role, content, sources, historyRole, meta = {}) {
+    messages.value.push({ role, content, sources, done: true, id: Date.now() + Math.random(), ...meta })
     // historyRole === false → 仅展示，不进发给 LLM 的历史
     if (historyRole !== false) chatHistory.value.push({ role: historyRole || role, content })
   }
