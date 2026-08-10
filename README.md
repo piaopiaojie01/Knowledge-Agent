@@ -198,7 +198,14 @@ curl -X PUT http://localhost:8080/api/admin/model-config \
 
 ### 技能与 MCP 管理（管理员）
 
-管理后台「技能管理」可启用/停用内置技能（`get_current_time` / `calculate` / `web_search` / `url_fetch` / `make_chart` 等 12 个），停用后 LLM 不再获得该工具。
+管理后台「技能管理」可启用/停用内置技能（22 个，含电商/爬虫/报表/汇总类）：
+
+- 通用：`get_current_time` / `calculate` / `web_search` / `url_fetch` / `get_weather` / `get_exchange_rate` / `wikipedia_lookup` / `date_calc` / `generate_password` / `make_icon` / `make_chart` / `news_headlines`
+- 电商：`barcode_lookup`（商品条码查询）、`exchange_convert`（汇率换算）
+- 数据采集：`github_search` / `arxiv_search` / `hn_search` / `pypi_info` / `web_extract`（网页正文提取，Trafilatura + r.jina.ai 兜底）
+- 报表：`stock_quote` / `stock_digest`（行情报表）、`make_table`（数据转 Markdown/CSV）
+
+停用后 LLM 不再获得该工具。
 
 「MCP 管理」可增删改查 MCP 服务器（Streamable HTTP / SSE 端点）。Agent 通过官方 `mcp` SDK 自动发现服务器工具，并以「服务器名__工具名」暴露给 LLM 调用；SDK 未安装、服务器不可达或调用失败时自动降级，不阻塞问答。配置随每次 RAG 请求下发，保存后立即生效。
 
@@ -279,6 +286,17 @@ g:\Knowledge Agent/
 
 ## 核心流程
 
+### 支持的文件类型与解析能力
+
+| 类型 | 解析方式 | 说明 |
+|------|----------|------|
+| TXT / Markdown / CSV | 文本直接入库 | 语义分块后向量化 |
+| PDF (.pdf) | pymupdf 结构化提取（标题/表格） | 扫描件自动降级 OCR（Docling + easyocr） |
+| Excel (.xlsx) | openpyxl 工作表转 Markdown 表格 | 内容预览回填 MySQL；老版 .xls 需另存 |
+| 图片 (png/jpg/jpeg) | easyocr 中英文 OCR | 仅识别图片中的文字，不做图像内容理解；无文字图片识别失败 |
+
+图片 OCR 提取的文字进入向量库后可检索、可问答；图片文档的 MySQL `content` 为空（预览不显示文字）。Excel/CSV 同 PDF 走语义分块管线。
+
 ### RAG 问答流程
 
 ```
@@ -293,7 +311,7 @@ g:\Knowledge Agent/
 
 ```
 1. MySQL 读取文档  → fetch_documents(kb_id)
-2. 原文分块        → 中英双语 token 估算分块（默认 450 token + 60 token 重叠，带章节上下文）
+2. 原文分块        → 语义分块（BGE 相邻句相似度断点）+ 标题边界 + token 预算兜底（默认 450 token / 60 重叠）
 3. 向量化          → embedder.encode_documents(chunks)
 4. Milvus 写入     → collection.insert(embeddings)
 5. 创建索引        → IVF_FLAT + nlist=128
@@ -338,6 +356,20 @@ g:\Knowledge Agent/
 - **上传校验**：服务端强制大小上限（默认 100MB，`ka.max-upload-mb` 可调），类型白名单校验。
 - **端口收敛**：docker-compose 中 MySQL/Redis/Milvus/MinIO 等仅绑定 127.0.0.1；Redis 默认启用口令。
 - **前端**：401 自动刷新重试一次；登出调用后端撤销 token；nginx/后端 CSP 移除 `unsafe-inline`/`unsafe-eval`。
+
+## 可观测性现状
+
+已具备：
+- 健康检查：后端 `/api/health`、Agent `/api/v1/rag/health`（含 Milvus/Embedding 状态）、入库任务状态接口；
+- 请求 ID：前端→后端→Agent 透传 `X-Request-Id`，三端日志均带 `[req=xxx]` 可串联；
+- 指标端点：后端 `/actuator/prometheus`（RAG 次数/token/文档上传 + JVM/HTTP 默认指标）、Agent `/metrics`（RAG 请求/耗时/token）；
+- 审计日志（业务级，MySQL `audit_logs`）、运行日志（Spring Boot / Python logging / systemd 日志）、token 与成本统计、入库进度追踪。
+
+尚缺（生产级可观测性）：
+- Prometheus 采集端（`deploy/monitoring/prometheus.yml` 已备好，未随 compose 启动）；
+- 链路追踪（OpenTelemetry）、日志聚合（Loki/ELK）与告警、可视化看板（Grafana）。
+
+上述缺口已列入 TODO（P1/P2）。
 
 ## 数据库设计
 

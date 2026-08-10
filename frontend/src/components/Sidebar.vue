@@ -48,9 +48,9 @@
         </template>
         <template v-else>
           <span class="dz-icon">📂</span>点击或拖拽文件到此处<br>
-          <small style="color:var(--text-3);font-size:10px">支持 TXT / Markdown / PDF / 图片</small>
+          <small style="color:var(--text-3);font-size:10px">支持 TXT / Markdown / PDF / Excel / CSV / 图片</small>
         </template>
-        <input ref="fileInput" type="file" accept=".txt,.md,.pdf,.png,.jpg,.jpeg" @change="handleFile" @click.stop hidden />
+        <input ref="fileInput" type="file" accept=".txt,.md,.pdf,.xlsx,.csv,.png,.jpg,.jpeg" @change="handleFile" @click.stop hidden />
       </div>
       <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--text-3)">
         解析设备

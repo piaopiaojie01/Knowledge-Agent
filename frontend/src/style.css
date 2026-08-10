@@ -329,6 +329,8 @@ table.doc-table{width:100%;border-collapse:collapse;font-size:13px}
 .doc-type.md,.doc-type.markdown{background:rgba(99,102,241,.15);color:#a5b4fc}
 .doc-type.txt{background:rgba(148,163,184,.15);color:var(--text-2)}
 .doc-type.png,.doc-type.jpg,.doc-type.jpeg{background:rgba(52,211,153,.13);color:var(--green)}
+.doc-type.excel,.doc-type.xlsx{background:rgba(16,185,129,.14);color:var(--green)}
+.doc-type.csv{background:rgba(251,191,36,.14);color:var(--amber)}
 
 .search-row{display:flex;gap:11px;margin-bottom:18px}
 .search-input{flex:1}
