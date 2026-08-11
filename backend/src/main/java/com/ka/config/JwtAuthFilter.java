@@ -5,6 +5,7 @@ import com.ka.entity.User;
 import com.ka.repository.UserRepository;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -84,6 +85,14 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         String bearerToken = request.getHeader("Authorization");
         if (StringUtils.hasText(bearerToken) && bearerToken.startsWith("Bearer ")) {
             return bearerToken.substring(7);
+        }
+        // P0：HttpOnly Cookie 通道（前端不再把 token 放 localStorage）
+        if (request.getCookies() != null) {
+            for (Cookie c : request.getCookies()) {
+                if ("ka_token".equals(c.getName()) && StringUtils.hasText(c.getValue())) {
+                    return c.getValue();
+                }
+            }
         }
         return null;
     }

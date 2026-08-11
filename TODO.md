@@ -3,6 +3,14 @@
 > 状态图例：`[ ]` 待办 ｜ `[x]` 已完成
 > 最近更新：2026-08-09（P0 安全加固 + P1 第一批可部署性已提交）
 
+## P0 稳定性与安全（已完成，2026-08-11）
+
+- [x] **Flyway 数据库迁移**：替代 `ddl-auto: update`，现有库 baseline v1 接管，新库走 V1 建表
+- [x] **备份覆盖**：MySQL 逻辑备份 + Redis RDB + Milvus/MinIO/etcd 数据卷 + 宿主机运行目录，含恢复脚本与定时任务文档
+- [x] **AgentClient 重试/熔断**：网络抖动自动重试（退避），连续失败熔断 30s 快速失败，区分查询/入库幂等
+- [x] **入库任务队列化**：Redis 分布式锁（SET NX + Lua 释放）防多副本重复入库，任务状态 Redis 镜像跨实例可见，Redis 不可用自动降级
+- [x] **token 移出 localStorage**：HttpOnly Cookie（SameSite=Strict）+ /auth/me 会话恢复 + 登出撤销黑名单并清 Cookie
+
 ## 权限管理（已完成，2026-08-10）
 
 - [x] 用户启用/禁用：禁用即时生效（JWT 过滤器校验用户状态，存量 token 立即失效）
@@ -39,18 +47,18 @@
 ### 待办（P1 剩余）
 
 - [ ] **真机验证 `docker compose up -d --build`**：首次构建 agent 镜像较慢（torch/docling 约 5-10GB），需实际跑通全栈并验证登录/上传/RAG 链路
-- [ ] **Flyway 数据库迁移**：替换 `ddl-auto: update`；现有库用 `baseline-on-migrate` 接管，测试环境需协调 H2 + Flyway
-- [ ] **Agent 入库任务队列化**：Redis Stream / Celery + 分布式锁，解决重启丢任务、多副本重复入库
-- [ ] **AgentClient 重试/熔断/降级**：Resilience4j（或轻量重试），区分查询/入库幂等性
+- [x] **Flyway 数据库迁移**：替换 `ddl-auto: update`；现有库用 `baseline-on-migrate` 接管，测试环境需协调 H2 + Flyway
+- [x] **Agent 入库任务队列化**：Redis 分布式锁 + 状态镜像，解决重启丢任务、多副本重复入库
+- [x] **AgentClient 重试/熔断/降级**：轻量重试 + 熔断，区分查询/入库幂等性
 - [ ] **可观测性**：请求 ID 贯穿 backend→agent、结构化日志、Prometheus 指标、日志聚合
-- [ ] **前端 token 移出 localStorage**：改 HttpOnly Cookie + CSRF 防护（或内存 token + 刷新机制）
+- [x] **前端 token 移出 localStorage**：改 HttpOnly Cookie（SameSite=Strict）+ /auth/me 会话恢复
 
 ## P2 运维加固
 
 - [ ] CI 增加镜像构建 + 依赖漏洞扫描（trivy） + secret 扫描
 - [ ] CI 发布产物：backend jar / agent 镜像 / frontend 镜像推送私有仓库
-- [ ] 备份覆盖 Milvus / Redis / 运行时卷（当前只有 MySQL 备份脚本）
-- [ ] 备份恢复演练流程与文档
+- [x] 备份覆盖 Milvus / Redis / 运行时卷（deploy/backup：backup.ps1 / restore.ps1）
+- [x] 备份恢复演练流程与文档（deploy/backup/README.md）
 - [ ] 日志聚合 + 告警（systemd / Docker 日志 → Loki / ELK）
 - [ ] 容量规划与资源限制（compose 加 mem_limit / cpus，模型加载约 4GB+）
 - [ ] 生产部署默认 profile 统一为 prod（deploy.sh 目前走根目录 compose 的 dev profile）

@@ -2,7 +2,8 @@ import axios from 'axios'
 
 const api = axios.create({ baseURL: '/api' })
 
-const AUTH_KEYS = ['ka_token', 'ka_role', 'ka_username', 'ka_session']
+// 兼容清理：旧版本把 token 存在 localStorage，P0 后改为 HttpOnly Cookie
+const AUTH_KEYS = ['ka_token', 'ka_role', 'ka_username']
 
 function genRequestId() {
   return (crypto.randomUUID && crypto.randomUUID()) ||
@@ -18,14 +19,10 @@ function clearAuthAndReload() {
 let refreshPromise = null
 
 async function refreshToken() {
-  const token = localStorage.getItem('ka_token')
-  if (!token) return null
   try {
-    const { data } = await api.post('/auth/refresh', null, {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    // Cookie 通道：无需携带 token，浏览器自动带 HttpOnly Cookie
+    const { data } = await api.post('/auth/refresh', null)
     if (data?.code === 200 && data.data?.token) {
-      localStorage.setItem('ka_token', data.data.token)
       return data.data.token
     }
   } catch (e) { /* 刷新失败走统一清理 */ }
@@ -36,24 +33,22 @@ async function refreshToken() {
 api.interceptors.request.use(cfg => {
   // 可观测性：透传请求 ID，便于后端/Agent 日志串联
   cfg.headers['X-Request-Id'] = cfg.headers['X-Request-Id'] || genRequestId()
-  const token = localStorage.getItem('ka_token')
-  if (token) cfg.headers.Authorization = `Bearer ${token}`
+  // P0：认证走 HttpOnly Cookie（SameSite=Strict），不在 JS 里保存 token
   return cfg
 })
 
 // 响应拦截：401 先尝试刷新重试一次，仍失败才清 token 跳登录
 api.interceptors.response.use(r => r, async err => {
   const { response, config } = err
-  const isAuthEndpoint = config?.url && /auth\/(login|refresh)/.test(config.url)
+  const isAuthEndpoint = config?.url && /auth\/(login|refresh|me)/.test(config.url)
   if (response?.status === 401 && config && !config._retry && !isAuthEndpoint) {
     config._retry = true
     if (!refreshPromise) refreshPromise = refreshToken().finally(() => { refreshPromise = null })
     const newToken = await refreshPromise
-    if (newToken) {
-      config.headers.Authorization = `Bearer ${newToken}`
-      return api(config)
-    }
+    if (newToken) return api(config)
   }
+  // 登录/刷新/会话探测失败不跳转，避免循环刷新
+  if (isAuthEndpoint) return Promise.reject(err)
   clearAuthAndReload()
   return Promise.reject(err)
 })
@@ -61,6 +56,7 @@ api.interceptors.response.use(r => r, async err => {
 // ── Auth ──
 export const authLogin = (u, p) => api.post('/auth/login', { username: u, password: p })
 export const authLogout = () => api.post('/auth/logout')
+export const authMe = () => api.get('/auth/me')
 
 // ── KB ──
 export const getKBList = () => api.get('/kb')
@@ -83,15 +79,14 @@ export const ragSearch = (question, kbNames, topK) =>
 
 // 流式问答：SSE 逐行解析（axios 不支持浏览器流式响应，用 fetch）
 export async function ragQueryStream(question, kbNames, history, sessionId, { onDelta, onFinal, onError }) {
-  const token = localStorage.getItem('ka_token')
   const resp = await fetch('/api/rag/query/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'Accept': 'text/event-stream',
-      'X-Request-Id': genRequestId(),
-      ...(token ? { Authorization: `Bearer ${token}` } : {})
+      'X-Request-Id': genRequestId()
     },
+    credentials: 'same-origin',
     body: JSON.stringify({ question, kbNames, history, sessionId })
   })
   if (!resp.ok || !resp.body) {

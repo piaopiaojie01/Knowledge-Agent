@@ -2,6 +2,7 @@ package com.ka.client;
 
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.*;
 import org.springframework.stereotype.Component;
@@ -11,28 +12,94 @@ import org.springframework.web.client.RestClientException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Supplier;
 
 @Slf4j
 @Component
 public class AgentClient {
 
+    /** P0：Agent 调用容错 —— 轻量重试 + 熔断，避免依赖服务抖动拖垮主链路 */
+    private static final int MAX_ATTEMPTS = 3;
+    private static final long BASE_BACKOFF_MS = 300L;
+    private static final int FAILURE_THRESHOLD = 5;
+    private static final long CIRCUIT_OPEN_MS = 30_000L;
+
     private final RestTemplate restTemplate;
     private final String agentBaseUrl;
     private final String apiKey;
+    private final AtomicInteger consecutiveFailures = new AtomicInteger();
+    private volatile long circuitOpenedAt = 0L;
 
+    @Autowired
     public AgentClient(@Value("${agent.base-url}") String agentBaseUrl,
                        @Value("${agent.connect-timeout:5000}") int connectTimeout,
                        @Value("${agent.read-timeout:60000}") int readTimeout,
                        @Value("${agent.api-key:}") String apiKey) {
-        this.agentBaseUrl = agentBaseUrl != null && agentBaseUrl.endsWith("/")
-                ? agentBaseUrl.substring(0, agentBaseUrl.length() - 1)
-                : agentBaseUrl;
-        this.apiKey = apiKey;
+        this(new RestTemplate(), agentBaseUrl, apiKey);
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(connectTimeout);
         factory.setReadTimeout(readTimeout);
-        this.restTemplate = new RestTemplate(factory);
+        this.restTemplate.setRequestFactory(factory);
+    }
+
+    /** 测试注入用：使用外部 RestTemplate */
+    AgentClient(RestTemplate restTemplate, String agentBaseUrl, String apiKey) {
+        this.restTemplate = restTemplate;
+        this.agentBaseUrl = agentBaseUrl != null && agentBaseUrl.endsWith("/")
+                ? agentBaseUrl.substring(0, agentBaseUrl.length() - 1)
+                : agentBaseUrl;
+        this.apiKey = apiKey;
+    }
+
+    private boolean isCircuitOpen() {
+        long opened = circuitOpenedAt;
+        if (opened == 0L) return false;
+        if (System.currentTimeMillis() - opened > CIRCUIT_OPEN_MS) {
+            circuitOpenedAt = 0L; // 半开：放一个请求试探
+            return false;
+        }
+        return true;
+    }
+
+    private void recordSuccess() {
+        consecutiveFailures.set(0);
+        circuitOpenedAt = 0L;
+    }
+
+    private void recordFailure() {
+        if (consecutiveFailures.incrementAndGet() >= FAILURE_THRESHOLD) {
+            circuitOpenedAt = System.currentTimeMillis();
+            log.warn("Agent 调用连续失败 {} 次，熔断 {}ms", FAILURE_THRESHOLD, CIRCUIT_OPEN_MS);
+        }
+    }
+
+    /** 带重试的 Agent 调用：网络/超时类异常重试（带退避）；熔断期内快速失败 */
+    private <T> T executeWithRetry(String op, Supplier<T> action) {
+        if (isCircuitOpen()) {
+            throw new RuntimeException("Agent 熔断中，请稍后重试: " + op);
+        }
+        RestClientException last = null;
+        for (int attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+            try {
+                T result = action.get();
+                recordSuccess();
+                return result;
+            } catch (RestClientException e) {
+                last = e;
+                recordFailure();
+                if (attempt < MAX_ATTEMPTS - 1) {
+                    try {
+                        Thread.sleep(BASE_BACKOFF_MS * (attempt + 1));
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+                }
+            }
+        }
+        throw new RuntimeException("Agent 调用失败: " + op + " - " + (last == null ? "unknown" : last.getMessage()), last);
     }
 
     public AgentQueryResponse ragQuery(String question, List<String> kbNames,
@@ -55,8 +122,10 @@ public class AgentClient {
             body.put("mcp_servers", mcpServers);
         }
         try {
-            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
-            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/query", req, Map.class).getBody();
+            Map<String, Object> rb = executeWithRetry("query", () -> {
+                HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
+                return restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/query", req, Map.class).getBody();
+            });
             if (rb == null) return AgentQueryResponse.builder().success(false).answer("Agent 空").build();
             return AgentQueryResponse.builder().success(true)
                     .answer((String) rb.getOrDefault("answer", ""))
@@ -67,7 +136,7 @@ public class AgentClient {
                     .cacheHitTokens(toInt(rb.get("cache_hit_tokens")))
                     .cacheMissTokens(toInt(rb.get("cache_miss_tokens")))
                     .build();
-        } catch (RestClientException e) {
+        } catch (RuntimeException e) {
             return AgentQueryResponse.builder().success(false).answer("Agent 失败: " + e.getMessage()).build();
         }
     }
@@ -80,12 +149,14 @@ public class AgentClient {
             body.put("llm_config", llmConfig);
         }
         try {
-            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
-            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/search", req, Map.class).getBody();
+            Map<String, Object> rb = executeWithRetry("search", () -> {
+                HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
+                return restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/search", req, Map.class).getBody();
+            });
             if (rb == null) return AgentQueryResponse.builder().success(false).answer("Agent 空").build();
             return AgentQueryResponse.builder().success(true)
                     .sources((List<Map<String, Object>>) rb.getOrDefault("results", List.of())).build();
-        } catch (RestClientException e) {
+        } catch (RuntimeException e) {
             return AgentQueryResponse.builder().success(false).answer("Agent 失败: " + e.getMessage()).build();
         }
     }
@@ -125,17 +196,19 @@ public class AgentClient {
     /** 查询后台入库任务状态；agent 不可达/无记录时返回 status=unknown，不抛异常 */
     public IngestStatusResponse ingestStatus(Long docId) {
         try {
-            HttpHeaders headers = jsonHeaders();
-            HttpEntity<Void> entity = new HttpEntity<>(headers);
-            Map<String, Object> rb = restTemplate.exchange(
-                    agentBaseUrl + "/api/v1/rag/ingest/" + docId + "/status",
-                    HttpMethod.GET, entity, Map.class).getBody();
+            Map<String, Object> rb = executeWithRetry("ingestStatus", () -> {
+                HttpHeaders headers = jsonHeaders();
+                HttpEntity<Void> entity = new HttpEntity<>(headers);
+                return restTemplate.exchange(
+                        agentBaseUrl + "/api/v1/rag/ingest/" + docId + "/status",
+                        HttpMethod.GET, entity, Map.class).getBody();
+            });
             if (rb == null) return new IngestStatusResponse("unknown", "Agent 空", 0, 0, 0, 0);
             return new IngestStatusResponse(
                     (String) rb.getOrDefault("status", "unknown"),
                     (String) rb.getOrDefault("message", ""), toInt(rb.get("inserted")),
                     toInt(rb.get("total")), toInt(rb.get("done")), toInt(rb.get("percent")));
-        } catch (RestClientException e) {
+        } catch (RuntimeException e) {
             log.warn("ingestStatus 查询失败: docId={}, error={}", docId, e.getMessage());
             return new IngestStatusResponse("unknown", e.getMessage(), 0, 0, 0, 0);
         }
@@ -143,13 +216,17 @@ public class AgentClient {
 
     public void deleteByKb(String kbName) {
         Map<String, Object> body = new HashMap<>(); body.put("kb_name", kbName);
-        try { restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/delete-by-kb", new HttpEntity<>(body, jsonHeaders()), Map.class); } catch (Exception e) { log.warn("deleteByKb failed: {}", e.getMessage()); }
+        try {
+            executeWithRetry("deleteByKb", () -> restTemplate.postForEntity(
+                    agentBaseUrl + "/api/v1/rag/delete-by-kb", new HttpEntity<>(body, jsonHeaders()), Map.class));
+        } catch (Exception e) { log.warn("deleteByKb failed: {}", e.getMessage()); }
     }
 
     public void deleteByDoc(Long docId) {
         Map<String, Object> body = new HashMap<>(); body.put("doc_id", docId);
         try {
-            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + "/api/v1/rag/delete-by-doc", new HttpEntity<>(body, jsonHeaders()), Map.class).getBody();
+            Map<String, Object> rb = executeWithRetry("deleteByDoc", () -> restTemplate.postForEntity(
+                    agentBaseUrl + "/api/v1/rag/delete-by-doc", new HttpEntity<>(body, jsonHeaders()), Map.class).getBody());
             if (rb != null && Boolean.FALSE.equals(rb.get("success"))) {
                 log.warn("deleteByDoc agent 返回失败: docId={}, error={}", docId, rb.get("error"));
             }
@@ -158,13 +235,15 @@ public class AgentClient {
 
     private IngestResponse postIngest(String url, Map<String, Object> body) {
         try {
-            HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
-            Map<String, Object> rb = restTemplate.postForEntity(agentBaseUrl + url, req, Map.class).getBody();
+            Map<String, Object> rb = executeWithRetry(url, () -> {
+                HttpEntity<Map<String, Object>> req = new HttpEntity<>(body, jsonHeaders());
+                return restTemplate.postForEntity(agentBaseUrl + url, req, Map.class).getBody();
+            });
             if (rb == null) return new IngestResponse(false, "Agent 空", null);
             return new IngestResponse((boolean) rb.getOrDefault("success", false),
                     (String) rb.getOrDefault("message", ""), (String) rb.getOrDefault("status", "unknown"),
                     (String) rb.getOrDefault("content_preview", ""));
-        } catch (RestClientException e) { return new IngestResponse(false, e.getMessage(), null); }
+        } catch (RuntimeException e) { return new IngestResponse(false, e.getMessage(), null); }
     }
 
     private HttpHeaders jsonHeaders() {

@@ -21,13 +21,21 @@ spring:
 
   jpa:
     hibernate:
-      ddl-auto: update
+      # P0：表结构改由 Flyway 版本化迁移管理，禁止 Hibernate 自动改表
+      ddl-auto: none
     show-sql: false
     open-in-view: false
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
+
+  flyway:
+    enabled: true
+    # 已存在的库：基线到版本 1（跳过 V1 建表），后续变更从 V2 开始
+    baseline-on-migrate: true
+    baseline-version: 1
+    locations: classpath:db/migration
 
   jackson:
     default-property-inclusion: non_null
@@ -67,6 +75,8 @@ ka:
     - /api/health
     - /favicon.ico
   jwt-blacklist-enabled: true
+  # P0：token 使用 HttpOnly Cookie；HTTPS 部署时置 true 加 Secure 标志
+  cookie-secure: ${KA_COOKIE_SECURE:false}
   max-upload-mb: 100
   cors-allow-trycloudflare: false
   chart-dir: ${KA_CHART_DIR:charts}

@@ -11,6 +11,8 @@ spring:
       ddl-auto: create-drop
     show-sql: false
     open-in-view: false
+  flyway:
+    enabled: false
 
 jwt:
   secret: test-only-secret-key-for-unit-tests-0123456789abcdef0123456789abcdef

@@ -6,6 +6,7 @@
 """
 
 import logging, threading, re, base64, os, json, time, sqlite3
+import uuid
 from pydantic import BaseModel, Field
 from fastapi import APIRouter, HTTPException
 
@@ -27,6 +28,70 @@ _DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
                         "data", "ingest_tasks.db")
 # RLock：_try_start_task 持锁内还会调用 _get_task/_set_task（各自再加锁）
 _task_lock = threading.RLock()
+
+# ═════════════════════════════════
+# 入库分布式锁 + 状态共享（Redis）：
+# 多副本 Agent 场景防重复入库、任务状态跨实例可见；Redis 不可用时降级单副本安全模式
+# ═════════════════════════════════
+_INSTANCE_ID = uuid.uuid4().hex[:8]
+_INGEST_LOCK_TTL = 6 * 3600
+_INGEST_STATUS_TTL = 24 * 3600
+_lock_tokens: dict[int, str] = {}
+
+_RELEASE_LUA = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+  return redis.call('del', KEYS[1])
+else
+  return 0
+end
+"""
+
+
+def _redis():
+    """懒建 Redis 客户端；连接不可用返回 None（调用方降级处理）"""
+    try:
+        import redis as _redis
+        return _redis.Redis(
+            host=settings.redis_host, port=settings.redis_port, db=settings.redis_db,
+            password=settings.redis_password or None, decode_responses=True,
+            socket_connect_timeout=2, socket_timeout=2)
+    except Exception as e:
+        logger.warning(f"Redis 客户端不可用: {e}")
+        return None
+
+
+def _try_acquire_lock(doc_id: int) -> bool:
+    """SET NX 分布式锁；Redis 不可用时放行（单副本仍由本地状态防重）"""
+    r = _redis()
+    if r is None:
+        return True
+    token = f"{_INSTANCE_ID}:{time.time():.3f}"
+    try:
+        if r.set(f"ka:ingest:lock:{doc_id}", token, nx=True, ex=_INGEST_LOCK_TTL):
+            _lock_tokens[doc_id] = token
+            return True
+    except Exception as e:
+        logger.warning(f"获取入库锁失败，降级放行: doc={doc_id}, {e}")
+        return True
+    return False
+
+
+def _release_lock(doc_id: int):
+    r = _redis()
+    token = _lock_tokens.pop(doc_id, None)
+    if r is None or token is None:
+        return
+    try:
+        r.eval(_RELEASE_LUA, 1, f"ka:ingest:lock:{doc_id}", token)
+    except Exception as e:
+        logger.warning(f"释放入库锁失败（锁将随 TTL 过期）: doc={doc_id}, {e}")
+
+
+def _run_locked_task(doc_id: int, target, args):
+    try:
+        target(*args)
+    finally:
+        _release_lock(doc_id)
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -54,14 +119,33 @@ def _set_task(doc_id: int, status: dict):
             conn.close()
         except Exception as e:
             logger.warning(f"任务状态持久化失败 doc={doc_id}: {e}")
+        # 跨副本可见：镜像到 Redis（TTL 24h，超时自动清理）
+        try:
+            r = _redis()
+            if r is not None:
+                r.set(f"ka:ingest:status:{doc_id}",
+                      json.dumps(status, ensure_ascii=False), ex=_INGEST_STATUS_TTL)
+        except Exception as e:
+            logger.warning(f"任务状态 Redis 镜像失败 doc={doc_id}: {e}")
 
 
 def _get_task(doc_id: int):
-    """优先读内存，miss 时读 SQLite 并回填内存"""
+    """优先读内存，其次 Redis（跨副本），最后 SQLite 并回填"""
     with _task_lock:
         s = _task_status.get(doc_id)
     if s is not None:
         return s
+    try:
+        r = _redis()
+        if r is not None:
+            raw = r.get(f"ka:ingest:status:{doc_id}")
+            if raw:
+                parsed = json.loads(raw)
+                with _task_lock:
+                    _task_status[doc_id] = parsed
+                return parsed
+    except Exception as e:
+        logger.warning(f"任务状态 Redis 读取失败 doc={doc_id}: {e}")
     try:
         conn = _db_conn()
         row = conn.execute("SELECT message FROM tasks WHERE task_id = ?",
@@ -139,6 +223,14 @@ def _do_ingest(req: IngestRequest, qa_lo: int = 0, qa_hi: int = 85):
     try:
         if not milvus_client.is_connected:
             _set_task(doc_id, {"status": "failed", "message": "Milvus not connected"}); return
+        content = req.content
+        # 文本形态的 CSV：先转 Markdown 表格再分块。
+        # 直接按纯文本分块会把所有行合并成一段（_join_unit_lines 不认逗号行），
+        # 行结构被破坏后“某行某列”类问题无法回答。
+        if _looks_like_csv(content):
+            content = csv_to_markdown(content)
+            req = IngestRequest(doc_id=req.doc_id, title=req.title,
+                                kb_name=req.kb_name, content=content)
         # 幂等：先清理该文档旧向量，避免重复入库导致向量翻倍
         try:
             delete_by_expr(f"doc_id == {doc_id}")
@@ -248,12 +340,17 @@ def _pdf_to_markdown(pdf_bytes: bytes, progress_cb=None) -> str:
 # ═════════════════════════════════
 
 def _try_start_task(doc_id: int, target, args) -> bool:
-    """原子地完成「检查状态 + 置 processing + 启动线程」，已在处理中返回 False"""
+    """原子地完成「检查状态 + 分布式锁 + 置 processing + 启动线程」，
+    已在处理中或锁被其他副本占用时返回 False"""
+    if not _try_acquire_lock(doc_id):
+        logger.info(f"入库任务被其他实例占用，跳过: doc={doc_id}")
+        return False
     with _task_lock:
         if (_get_task(doc_id) or {}).get("status") == "processing":
+            _release_lock(doc_id)
             return False
         _set_task(doc_id, {"status": "processing", "total": 0, "done": 0, "message": "排队中..."})
-        threading.Thread(target=target, args=args, daemon=True).start()
+        threading.Thread(target=_run_locked_task, args=(doc_id, target, args), daemon=True).start()
         return True
 
 
@@ -430,6 +527,45 @@ def _ocr_image(img_bytes: bytes, device: str | None = None) -> str:
     reader = _get_ocr(device)
     results = reader.readtext(img_bytes, detail=0)
     return "\n".join(results)
+
+
+def _looks_like_csv(content: str) -> bool:
+    """启发式判断文本是否为 CSV：≥2 行、首行含英文逗号、多数行字段数一致"""
+    lines = [l.strip() for l in content.splitlines() if l.strip()]
+    if len(lines) < 2:
+        return False
+    first = lines[0].count(",")
+    if first < 1:
+        return False
+    body = lines[1:]
+    if not body:
+        return False
+    consistent = sum(1 for l in body if l.count(",") == first)
+    return consistent >= max(1, int(len(body) * 0.6))
+
+
+def csv_to_markdown(content: str, max_rows: int = 500, max_cell: int = 100) -> str:
+    """CSV 文本 → Markdown 表格（行/单元格上限与 Excel 路径一致，防止超长）"""
+    import csv as _csv
+    import io as _io
+    try:
+        rows = list(_csv.reader(_io.StringIO(content)))
+    except Exception as e:
+        logger.warning("CSV 解析失败，按原文分块: %s", e)
+        return content
+    rows = [r for r in rows if any(str(c).strip() for c in r)][:max_rows]
+    if not rows:
+        return content
+
+    esc = lambda c: str(c).strip()[:max_cell].replace("|", "\\|")
+    width = max(len(r) for r in rows)
+    header = [esc(rows[0][i]) if i < len(rows[0]) else "" for i in range(width)]
+    md = "| " + " | ".join(header) + " |\n"
+    md += "| " + " | ".join("---" for _ in range(width)) + " |\n"
+    for row in rows[1:]:
+        cells = [esc(row[i]) if i < len(row) else "" for i in range(width)]
+        md += "| " + " | ".join(cells) + " |\n"
+    return md
 
 
 # ═════════════════════════════════════════
