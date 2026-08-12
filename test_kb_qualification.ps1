@@ -1,4 +1,4 @@
-# Knowledge Agent 可用性验收脚本
+﻿# Knowledge Agent 可用性验收脚本
 # 用法: .\test_kb_qualification.ps1
 # 覆盖: 服务健康 / 认证与撤销 / 知识库 CRUD / 文档上传入库 / 检索 / RAG 问答 / 权限 / 上传校验
 param(
