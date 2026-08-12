@@ -4,7 +4,7 @@ services:
     container_name: ka-mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS:?DB_ROOT_PASS 必须设置（/etc/ka.env）}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD 必须设置（/etc/ka.env）}
       MYSQL_DATABASE: knowledge_agent
       MYSQL_USER: ka_user
       MYSQL_PASSWORD: ${DB_PASS:?DB_PASS 必须设置（/etc/ka.env）}
@@ -45,8 +45,8 @@ services:
     restart: always
     command: minio server /minio_data
     environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER 必须设置}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 必须设置}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY 必须设置}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY 必须设置}
     ports:
       - "127.0.0.1:9000:9000"
     volumes:
@@ -62,8 +62,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
-      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER 必须设置}
-      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 必须设置}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?MINIO_ACCESS_KEY 必须设置}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?MINIO_SECRET_KEY 必须设置}
     ports:
       - "127.0.0.1:19530:19530"
       - "127.0.0.1:9091:9091"
