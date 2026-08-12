@@ -88,6 +88,10 @@ ka:
   login-lock-minutes: 30
   audit-retention-days: 365
   password-min-length: 8
+  admin:
+    # 一键部署：管理员账号由环境变量注入（首次启动创建/升级默认密码）
+    username: ${KA_ADMIN_USERNAME:admin}
+    password: ${KA_ADMIN_PASSWORD:}
 
 management:
   endpoints:

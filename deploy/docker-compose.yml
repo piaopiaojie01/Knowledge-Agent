@@ -74,7 +74,7 @@ services:
     build: ../backend
     restart: always
     ports:
-      - "8080:8080"
+          - "${BACKEND_PORT:-8080}:8080"
     environment:
       SPRING_PROFILES_ACTIVE: prod
       KA_DEEPSEEK_API_KEY: ${KA_DEEPSEEK_API_KEY:-}
@@ -82,6 +82,8 @@ services:
       AGENT_URL: http://agent:8000
       AGENT_API_KEY: ${KA_INTERNAL_API_KEY:?KA_INTERNAL_API_KEY 必须设置}
       REDIS_PASSWORD: ${REDIS_PASS:?REDIS_PASS 必须设置（/etc/ka.env）}
+      KA_ADMIN_USERNAME: ${KA_ADMIN_USERNAME:-admin}
+      KA_ADMIN_PASSWORD: ${KA_ADMIN_PASSWORD:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须设置}
       KA_CHART_DIR: /app/charts
       KA_ICON_DIR: /app/icons
@@ -127,8 +129,8 @@ services:
     build: ../frontend
     restart: always
     ports:
-      - "80:80"
-      - "443:443"
+          - "${HTTP_PORT:-80}:80"
+          - "${HTTPS_PORT:-443}:443"
     depends_on:
       - backend
       - agent
