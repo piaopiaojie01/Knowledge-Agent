@@ -11,7 +11,8 @@ COPY . .
 RUN npm run build
 
 # ---- 运行阶段 ----
-FROM nginx:1.27-alpine
+# 用 nginx:alpine（不锁小版本，避免 1.27 小版本 tag 拉取不稳定）
+FROM nginx:alpine
 COPY --from=build /build/dist /usr/share/nginx/html
 # 容器版 nginx 配置（反代 backend，root 指向镜像内静态目录）
 COPY nginx.conf /etc/nginx/conf.d/default.conf

@@ -71,7 +71,12 @@ services:
   # === 应用服务（先 npm run build，再 docker compose up）===
   backend:
     container_name: ka-backend
-    build: ../backend
+    build:
+      context: ../backend
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
     restart: always
     ports:
           - "${BACKEND_PORT:-8080}:8080"
@@ -102,7 +107,12 @@ services:
 
   agent:
     container_name: ka-agent
-    build: ../agent
+    build:
+      context: ../agent
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
     restart: always
     environment:
       KA_DEEPSEEK_API_KEY: ${KA_DEEPSEEK_API_KEY:-}

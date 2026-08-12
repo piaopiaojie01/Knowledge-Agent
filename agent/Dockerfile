@@ -5,6 +5,12 @@
 FROM python:3.11-slim
 WORKDIR /app
 
+# 构建代理（部署时通过 --build-arg 或 compose args 注入，解决容器内访问 PyPI 不通）
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY=""
+ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} no_proxy=${NO_PROXY}
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     HF_HUB_OFFLINE=0 \

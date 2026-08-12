@@ -4,6 +4,12 @@
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /build
 
+# 构建代理（部署时通过 --build-arg 或 compose args 注入，解决容器内访问 Maven 中央仓库不通）
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY=""
+ENV http_proxy=${HTTP_PROXY} https_proxy=${HTTPS_PROXY} no_proxy=${NO_PROXY}
+
 # 先拷贝 pom 以复用依赖层缓存
 COPY pom.xml .
 RUN mvn -B dependency:go-offline
