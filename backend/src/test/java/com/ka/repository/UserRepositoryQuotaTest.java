@@ -63,7 +63,7 @@ class UserRepositoryQuotaTest {
     void 未超限时返回1行且storageUsed增加() {
         Long id = newUser("quota_ok", 100L, 1000L);
 
-        int rows = userRepository.addStorageUsedIfWithinLimit(id, 500L);
+        int rows = userRepository.addStorageUsedIfWithinLimit(id, 500L, UserRepository.DEFAULT_STORAGE_LIMIT);
 
         assertEquals(1, rows, "未超限应更新 1 行");
         assertEquals(600L, storageUsedOf(id), "storageUsed 应累加 delta");
@@ -73,7 +73,7 @@ class UserRepositoryQuotaTest {
     void 超限时返回0行且storageUsed不变() {
         Long id = newUser("quota_over", 900L, 1000L);
 
-        int rows = userRepository.addStorageUsedIfWithinLimit(id, 200L);
+        int rows = userRepository.addStorageUsedIfWithinLimit(id, 200L, UserRepository.DEFAULT_STORAGE_LIMIT);
 
         assertEquals(0, rows, "超限应更新 0 行（原子判断，不加不减）");
         assertEquals(900L, storageUsedOf(id), "超限时 storageUsed 必须保持不变");
@@ -83,7 +83,7 @@ class UserRepositoryQuotaTest {
     void 恰好等于上限时允许更新() {
         Long id = newUser("quota_edge", 400L, 1000L);
 
-        int rows = userRepository.addStorageUsedIfWithinLimit(id, 600L);
+        int rows = userRepository.addStorageUsedIfWithinLimit(id, 600L, UserRepository.DEFAULT_STORAGE_LIMIT);
 
         assertEquals(1, rows, "storageUsed + delta == limit 边界应放行");
         assertEquals(1000L, storageUsedOf(id));
@@ -94,11 +94,11 @@ class UserRepositoryQuotaTest {
         Long id = newUser("quota_null_limit", GB5 - 100, GB5);
         forceStorageLimitNull(id);
 
-        int ok = userRepository.addStorageUsedIfWithinLimit(id, 100L);
+        int ok = userRepository.addStorageUsedIfWithinLimit(id, 100L, UserRepository.DEFAULT_STORAGE_LIMIT);
         assertEquals(1, ok, "NULL 上限按 5GB 计，未超应放行");
         assertEquals(GB5, storageUsedOf(id));
 
-        int over = userRepository.addStorageUsedIfWithinLimit(id, 1L);
+        int over = userRepository.addStorageUsedIfWithinLimit(id, 1L, UserRepository.DEFAULT_STORAGE_LIMIT);
         assertEquals(0, over, "NULL 上限按 5GB 计，超出 1 字节也应拒绝");
         assertEquals(GB5, storageUsedOf(id));
     }
@@ -108,20 +108,20 @@ class UserRepositoryQuotaTest {
         Long zeroId = newUser("quota_zero_limit", GB5 - 100, 0L);
         Long negId = newUser("quota_neg_limit", GB5 - 100, -1L);
 
-        assertEquals(1, userRepository.addStorageUsedIfWithinLimit(zeroId, 100L),
+        assertEquals(1, userRepository.addStorageUsedIfWithinLimit(zeroId, 100L, UserRepository.DEFAULT_STORAGE_LIMIT),
                 "上限为 0 应走 5GB 默认，未超放行");
-        assertEquals(0, userRepository.addStorageUsedIfWithinLimit(zeroId, 1L),
+        assertEquals(0, userRepository.addStorageUsedIfWithinLimit(zeroId, 1L, UserRepository.DEFAULT_STORAGE_LIMIT),
                 "上限为 0 应走 5GB 默认，超出拒绝");
 
-        assertEquals(1, userRepository.addStorageUsedIfWithinLimit(negId, 100L),
+        assertEquals(1, userRepository.addStorageUsedIfWithinLimit(negId, 100L, UserRepository.DEFAULT_STORAGE_LIMIT),
                 "上限为负数应走 5GB 默认，未超放行");
-        assertEquals(0, userRepository.addStorageUsedIfWithinLimit(negId, 1L),
+        assertEquals(0, userRepository.addStorageUsedIfWithinLimit(negId, 1L, UserRepository.DEFAULT_STORAGE_LIMIT),
                 "上限为负数应走 5GB 默认，超出拒绝");
     }
 
     @Test
     void 用户不存在时返回0行() {
-        assertEquals(0, userRepository.addStorageUsedIfWithinLimit(999999L, 100L));
+        assertEquals(0, userRepository.addStorageUsedIfWithinLimit(999999L, 100L, UserRepository.DEFAULT_STORAGE_LIMIT));
     }
 
     @Test

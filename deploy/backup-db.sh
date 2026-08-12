@@ -4,11 +4,13 @@
 # 建议: crontab -e 添加  0 3 * * * /opt/knowledge-agent/deploy/backup-db.sh
 
 set -e
+# P0：口令从 /etc/ka.env 或环境变量注入，仓库不写死密码
+if [ -f /etc/ka.env ]; then . /etc/ka.env; fi
 BACKUP_DIR="/opt/knowledge-agent/backups"
 MYSQL_CONTAINER="ka-mysql"
 DB_NAME="knowledge_agent"
 DB_USER="ka_user"
-DB_PASS="ka_pass_2024"
+DB_PASS="${DB_PASS:?未设置 DB_PASS（可在 /etc/ka.env 配置）}"
 KEEP_DAYS=30
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 FILE="$BACKUP_DIR/ka_backup_$TIMESTAMP.sql.gz"

@@ -125,7 +125,8 @@ public class DocumentController {
         }
 
         // 原子占用配额：0 行 = 用户不存在或超出上限
-        if (userRepository.addStorageUsedIfWithinLimit(userId, file.getSize()) == 0) {
+        if (userRepository.addStorageUsedIfWithinLimit(
+                userId, file.getSize(), com.ka.repository.UserRepository.DEFAULT_STORAGE_LIMIT) == 0) {
             return ApiResponse.error(400, "存储配额不足，无法上传");
         }
 

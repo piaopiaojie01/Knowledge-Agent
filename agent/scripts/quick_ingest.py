@@ -25,7 +25,8 @@ milvus_client.ensure_collection()
 
 import pymysql
 conn = pymysql.connect(host="localhost", port=3306, user="ka_user",
-                       password="ka_pass_2024", database="knowledge_agent", charset="utf8mb4")
+                       password=os.getenv("DB_PASS", os.getenv("KA_MYSQL_PASSWORD", "")),
+                       database="knowledge_agent", charset="utf8mb4")
 with conn.cursor(pymysql.cursors.DictCursor) as c:
     c.execute("""SELECT d.id, d.title, d.content, kb.name as kb_name
                  FROM documents d JOIN knowledge_bases kb ON d.kb_id = kb.id

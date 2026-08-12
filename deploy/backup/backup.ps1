@@ -1,11 +1,16 @@
 ﻿param(
     [string]$BackupDir = "G:\Knowledge Agent\deploy\backup\backups",
     [int]$RetentionDays = 30,
-    [string]$MySqlPwd = "root123",
-    [string]$RedisPwd = "ka_redis_dev_2026"
+    [string]$MySqlPwd = "",
+    [string]$RedisPwd = ""
 )
 # P0 备份：MySQL 逻辑备份 + Redis RDB + Milvus/MinIO/etcd 数据卷 + 宿主机运行目录
 $ErrorActionPreference = 'Stop'
+if (-not $MySqlPwd) { $MySqlPwd = $env:KA_MYSQL_ROOT_PASSWORD }
+if (-not $RedisPwd) { $RedisPwd = $env:KA_REDIS_PASSWORD }
+if (-not $MySqlPwd) {
+    throw "缺少 MySQL 口令：请用 -MySqlPwd 传入，或设置环境变量 KA_MYSQL_ROOT_PASSWORD"
+}
 $stamp = Get-Date -Format 'yyyyMMdd_HHmmss'
 $target = Join-Path $BackupDir $stamp
 New-Item -ItemType Directory -Path $target -Force | Out-Null

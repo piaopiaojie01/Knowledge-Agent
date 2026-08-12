@@ -23,8 +23,9 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Transactional
     @Query("UPDATE User u SET u.storageUsed = u.storageUsed + :delta WHERE u.id = :id " +
            "AND u.storageUsed + :delta <= (CASE WHEN u.storageLimit IS NULL OR u.storageLimit <= 0 " +
-           "THEN 5368709120 ELSE u.storageLimit END)")
-    int addStorageUsedIfWithinLimit(@Param("id") Long id, @Param("delta") long delta);
+           "THEN :defaultLimit ELSE u.storageLimit END)")
+    int addStorageUsedIfWithinLimit(@Param("id") Long id, @Param("delta") long delta,
+                                    @Param("defaultLimit") long defaultLimit);
 
     /** 原子扣减已用存储，下限为 0 */
     @Modifying

@@ -29,10 +29,12 @@ MYSQL_CONFIG = {
     "host": os.getenv("KA_MYSQL_HOST", "localhost"),
     "port": int(os.getenv("KA_MYSQL_PORT", "3306")),
     "user": os.getenv("KA_MYSQL_USER", "ka_user"),
-    "password": os.getenv("KA_MYSQL_PASSWORD", "ka_pass_2024"),
+    "password": os.getenv("KA_MYSQL_PASSWORD", os.getenv("DB_PASS", "")),
     "database": os.getenv("KA_MYSQL_DATABASE", "knowledge_agent"),
     "charset": "utf8mb4",
 }
+if not MYSQL_CONFIG["password"]:
+    raise SystemExit("未设置数据库口令：请配置 KA_MYSQL_PASSWORD 或 DB_PASS 环境变量")
 
 
 def get_mysql_connection():

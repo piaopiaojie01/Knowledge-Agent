@@ -6,8 +6,18 @@ set "BACKEND_DIR=%~dp0backend"
 set "FRONTEND_DIR=%~dp0frontend"
 set "VENV_PYTHON=%AGENT_DIR%\.venv\Scripts\python.exe"
 set "CURL=%SystemRoot%\System32\curl.exe"
-set "INTERNAL_KEY=ka-internal-dev-key"
-set "REDIS_PASS=ka_redis_dev_2026"
+
+:: P0：口令/密钥一律从 .env 加载（仓库不写死密码）
+if exist "%~dp0.env" (
+    for /f "usebackq eol=# tokens=1,* delims==" %%a in ("%~dp0.env") do (
+        if not "%%a"=="" set "%%a=%%b"
+    )
+)
+if not defined JWT_SECRET (echo [错误] 缺少 JWT_SECRET，请将 .env.example 复制为 .env 并配置 & exit /b 1)
+if not defined REDIS_PASS (echo [错误] 缺少 REDIS_PASS，请将 .env.example 复制为 .env 并配置 & exit /b 1)
+if not defined DB_PASS (echo [错误] 缺少 DB_PASS，请将 .env.example 复制为 .env 并配置 & exit /b 1)
+if not defined KA_INTERNAL_API_KEY (echo [错误] 缺少 KA_INTERNAL_API_KEY，请将 .env.example 复制为 .env 并配置 & exit /b 1)
+set "INTERNAL_KEY=%KA_INTERNAL_API_KEY%"
 
 echo ========================================
 echo   Knowledge Agent 一键启动

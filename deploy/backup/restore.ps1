@@ -1,10 +1,15 @@
 ﻿param(
     [Parameter(Mandatory = $true)][string]$BackupPath,
-    [string]$MySqlPwd = "root123",
-    [string]$RedisPwd = "ka_redis_dev_2026"
+    [string]$MySqlPwd = "",
+    [string]$RedisPwd = ""
 )
 # P0 恢复：从 deploy/backup/backups/<时间戳> 恢复 MySQL / Redis / 数据卷
 $ErrorActionPreference = 'Stop'
+if (-not $MySqlPwd) { $MySqlPwd = $env:KA_MYSQL_ROOT_PASSWORD }
+if (-not $RedisPwd) { $RedisPwd = $env:KA_REDIS_PASSWORD }
+if (-not $MySqlPwd) {
+    throw "缺少 MySQL 口令：请用 -MySqlPwd 传入，或设置环境变量 KA_MYSQL_ROOT_PASSWORD"
+}
 if (-not (Test-Path $BackupPath)) { throw "备份目录不存在: $BackupPath" }
 Write-Host "[restore] 从 $BackupPath 恢复（会覆盖现有数据，请先停止业务写入）"
 

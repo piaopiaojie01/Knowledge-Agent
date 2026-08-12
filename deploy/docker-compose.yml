@@ -4,10 +4,10 @@ services:
     container_name: ka-mysql
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS:-ka_root_2024}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS:?DB_ROOT_PASS 必须设置（/etc/ka.env）}
       MYSQL_DATABASE: knowledge_agent
       MYSQL_USER: ka_user
-      MYSQL_PASSWORD: ${DB_PASS:-ka_pass_2024}
+      MYSQL_PASSWORD: ${DB_PASS:?DB_PASS 必须设置（/etc/ka.env）}
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
@@ -22,7 +22,7 @@ services:
     image: redis:7-alpine
     container_name: ka-redis
     restart: always
-    command: redis-server --requirepass ${REDIS_PASS:-ka_redis_dev_2026}
+    command: redis-server --requirepass ${REDIS_PASS:?REDIS_PASS 必须设置（/etc/ka.env）}
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -45,8 +45,8 @@ services:
     restart: always
     command: minio server /minio_data
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER 必须设置}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 必须设置}
     ports:
       - "127.0.0.1:9000:9000"
     volumes:
@@ -62,6 +62,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:?MINIO_ROOT_USER 必须设置}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD 必须设置}
     ports:
       - "127.0.0.1:19530:19530"
       - "127.0.0.1:9091:9091"
@@ -79,7 +81,7 @@ services:
       # P0：内部密钥 + Agent 地址 + Redis 口令
       AGENT_URL: http://agent:8000
       AGENT_API_KEY: ${KA_INTERNAL_API_KEY:?KA_INTERNAL_API_KEY 必须设置}
-      REDIS_PASSWORD: ${REDIS_PASS:-ka_redis_dev_2026}
+      REDIS_PASSWORD: ${REDIS_PASS:?REDIS_PASS 必须设置（/etc/ka.env）}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET 必须设置}
       KA_CHART_DIR: /app/charts
       KA_ICON_DIR: /app/icons
@@ -104,7 +106,7 @@ services:
       KA_DEEPSEEK_API_KEY: ${KA_DEEPSEEK_API_KEY:-}
       # P0：内部鉴权密钥（与 backend AGENT_API_KEY 保持一致）
       KA_INTERNAL_API_KEY: ${KA_INTERNAL_API_KEY:?KA_INTERNAL_API_KEY 必须设置}
-      KA_REDIS_PASSWORD: ${REDIS_PASS:-ka_redis_dev_2026}
+      KA_REDIS_PASSWORD: ${REDIS_PASS:?REDIS_PASS 必须设置（/etc/ka.env）}
       KA_CHART_OUTPUT_DIR: /data/charts
       KA_ICON_OUTPUT_DIR: /data/icons
       KA_CHART_BASE_URL: https://knowledge-agent.your-company.com

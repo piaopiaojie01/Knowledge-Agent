@@ -127,7 +127,7 @@ class DocumentControllerTest {
         assertEquals(409, resp.getCode());
         assertTrue(resp.getMessage().contains("文档已存在"));
         verify(documentRepository, never()).save(any());
-        verify(userRepository, never()).addStorageUsedIfWithinLimit(anyLong(), anyLong());
+        verify(userRepository, never()).addStorageUsedIfWithinLimit(anyLong(), anyLong(), anyLong());
     }
 
     @Test
@@ -137,7 +137,7 @@ class DocumentControllerTest {
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
         // 模拟超限：原子更新影响 0 行
-        when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(0);
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), eq((long) bytes.length), anyLong())).thenReturn(0);
 
         ApiResponse<DocumentDTO> resp = controller.upload(file, 10L, null);
 
@@ -182,7 +182,7 @@ class DocumentControllerTest {
         mockFile(bytes, longName);
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
-        when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(1);
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), eq((long) bytes.length), anyLong())).thenReturn(1);
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
             Document d = inv.getArgument(0);
             d.setId(1L);
@@ -208,7 +208,7 @@ class DocumentControllerTest {
         mockFile(bytes, "a.txt");
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
-        when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(1);
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), eq((long) bytes.length), anyLong())).thenReturn(1);
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
             Document d = inv.getArgument(0);
             if (d.getId() == null) d.setId(1L);
@@ -230,7 +230,7 @@ class DocumentControllerTest {
         mockFile(bytes, "a.txt");
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
-        when(userRepository.addStorageUsedIfWithinLimit(1L, (long) bytes.length)).thenReturn(1);
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), eq((long) bytes.length), anyLong())).thenReturn(1);
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
             Document d = inv.getArgument(0);
             if (d.getId() == null) d.setId(1L);
@@ -319,7 +319,7 @@ class DocumentControllerTest {
         mockFile(new byte[]{1, 2, 3, 4}, "data.xlsx");
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
-        when(userRepository.addStorageUsedIfWithinLimit(1L, 4L)).thenReturn(1);
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), eq(4L), anyLong())).thenReturn(1);
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
             Document d = inv.getArgument(0);
             if (d.getId() == null) d.setId(1L);
@@ -341,7 +341,7 @@ class DocumentControllerTest {
         mockFile("产品,销量\n苹果,100\n".getBytes(StandardCharsets.UTF_8), "data.csv");
         when(documentRepository.findFirstByKbIdAndContentHashAndDocStatus(eq(10L), anyString(), eq("ACTIVE")))
                 .thenReturn(Optional.empty());
-        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), anyLong())).thenReturn(1);
+        when(userRepository.addStorageUsedIfWithinLimit(eq(1L), anyLong(), anyLong())).thenReturn(1);
         when(documentRepository.save(any(Document.class))).thenAnswer(inv -> {
             Document d = inv.getArgument(0);
             if (d.getId() == null) d.setId(1L);

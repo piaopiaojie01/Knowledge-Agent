@@ -12,8 +12,9 @@ server:
 spring:
   datasource:
     url: jdbc:mysql://localhost:3306/knowledge_agent?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&useUnicode=true&connectionCollation=utf8mb4_unicode_ci
-    username: ka_user
-    password: ka_pass_2024
+    # P0：口令一律走环境变量（.env / start.bat），仓库不写死
+    username: ${DB_USER:ka_user}
+    password: ${DB_PASS}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 5
@@ -26,9 +27,9 @@ spring:
       # 本地 Redis 无口令时留空；docker-compose 部署会注入 REDIS_PASSWORD
       password: ${REDIS_PASSWORD:}
 
-# 开发环境专用 JWT 密钥（仅限本地开发，生产环境严禁使用）
+# JWT 签名密钥（从环境变量注入；start.bat 会从 .env 加载）
 jwt:
-  secret: ${JWT_SECRET:KX9mP2vN7qR4sW8yB3dF6gH1jL5nO0pT3uV6xZ9cA2eI4mQ7rT1wY5}
+  secret: ${JWT_SECRET}
 
 logging:
   level:

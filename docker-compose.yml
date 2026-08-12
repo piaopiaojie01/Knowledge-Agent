@@ -4,10 +4,10 @@ services:
     container_name: ka-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: root123
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?请在 .env 中配置 MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: knowledge_agent
-      MYSQL_USER: ka_user
-      MYSQL_PASSWORD: ka_pass_2024
+      MYSQL_USER: ${DB_USER:-ka_user}
+      MYSQL_PASSWORD: ${DB_PASS:?请在 .env 中配置 DB_PASS}
     ports:
       - "127.0.0.1:3306:3306"
     volumes:
@@ -23,7 +23,7 @@ services:
     image: redis:7-alpine
     container_name: ka-redis
     restart: unless-stopped
-    command: redis-server --requirepass ${REDIS_PASS:-ka_redis_dev_2026}
+    command: redis-server --requirepass ${REDIS_PASS:?请在 .env 中配置 REDIS_PASS}
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -57,8 +57,8 @@ services:
     image: minio/minio:RELEASE.2023-03-20T20-16-18Z
     restart: unless-stopped
     environment:
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?请在 .env 中配置 MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?请在 .env 中配置 MINIO_SECRET_KEY}
     ports:
       - "127.0.0.1:9001:9001"
       - "127.0.0.1:9000:9000"
@@ -81,6 +81,8 @@ services:
     environment:
       ETCD_ENDPOINTS: etcd:2379
       MINIO_ADDRESS: minio:9000
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:?请在 .env 中配置 MINIO_ACCESS_KEY}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:?请在 .env 中配置 MINIO_SECRET_KEY}
     volumes:
       - milvus_data:/var/lib/milvus
     healthcheck:
@@ -108,14 +110,14 @@ services:
       KA_DEEPSEEK_API_KEY: ${KA_DEEPSEEK_API_KEY:-}
       # P0：内部密钥 + Agent 地址 + Redis 口令
       AGENT_URL: http://agent:8000
-      AGENT_API_KEY: ${KA_INTERNAL_API_KEY:-ka-internal-dev-key}
-      REDIS_PASSWORD: ${REDIS_PASS:-ka_redis_dev_2026}
+      AGENT_API_KEY: ${KA_INTERNAL_API_KEY:?请在 .env 中配置 KA_INTERNAL_API_KEY}
+      REDIS_PASSWORD: ${REDIS_PASS:?请在 .env 中配置 REDIS_PASS}
       KA_CHART_DIR: /app/charts
       KA_ICON_DIR: /app/icons
       # 容器内连接中间件（不能指向容器自身 localhost）
       DB_URL: jdbc:mysql://mysql:3306/knowledge_agent?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&useUnicode=true&connectionCollation=utf8mb4_unicode_ci
       DB_USER: ka_user
-      DB_PASS: ${DB_PASS:-ka_pass_2024}
+      DB_PASS: ${DB_PASS:?请在 .env 中配置 DB_PASS}
     volumes:
       - ka_charts:/app/charts
       - ka_icons:/app/icons
@@ -134,8 +136,8 @@ services:
     environment:
       KA_DEEPSEEK_API_KEY: ${KA_DEEPSEEK_API_KEY:-}
       # P0：内部鉴权密钥（与 backend AGENT_API_KEY 保持一致）
-      KA_INTERNAL_API_KEY: ${KA_INTERNAL_API_KEY:-ka-internal-dev-key}
-      KA_REDIS_PASSWORD: ${REDIS_PASS:-ka_redis_dev_2026}
+      KA_INTERNAL_API_KEY: ${KA_INTERNAL_API_KEY:?请在 .env 中配置 KA_INTERNAL_API_KEY}
+      KA_REDIS_PASSWORD: ${REDIS_PASS:?请在 .env 中配置 REDIS_PASS}
       KA_CHART_OUTPUT_DIR: /data/charts
       KA_ICON_OUTPUT_DIR: /data/icons
       KA_CHART_BASE_URL: http://localhost

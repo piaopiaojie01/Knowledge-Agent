@@ -3,11 +3,12 @@
 # 用法: ./restore-db.sh ka_backup_20260730_030000.sql.gz
 
 set -e
+if [ -f /etc/ka.env ]; then . /etc/ka.env; fi
 BACKUP_FILE="$1"
 MYSQL_CONTAINER="ka-mysql"
 DB_NAME="knowledge_agent"
 DB_USER="ka_user"
-DB_PASS="ka_pass_2024"
+DB_PASS="${DB_PASS:?未设置 DB_PASS（可在 /etc/ka.env 配置）}"
 
 if [ -z "$BACKUP_FILE" ]; then
     echo "用法: $0 <备份文件.sql.gz>"

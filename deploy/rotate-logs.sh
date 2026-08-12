@@ -3,10 +3,11 @@
 # 建议: crontab 添加  0 4 * * 0 /opt/knowledge-agent/deploy/rotate-logs.sh (每周日凌晨4点)
 
 set -e
+if [ -f /etc/ka.env ]; then . /etc/ka.env; fi
 MYSQL_CONTAINER="ka-mysql"
 DB_NAME="knowledge_agent"
 DB_USER="ka_user"
-DB_PASS="ka_pass_2024"
+DB_PASS="${DB_PASS:?未设置 DB_PASS（可在 /etc/ka.env 配置）}"
 
 echo "[$(date)] 开始审计日志轮转 ..."
 
